@@ -11,8 +11,8 @@
     "start": "node src/server.js",
     "test": "node --test test/unit/*.test.js",
     "test:integration": "node scripts/test-integration.js",
-    "lint": "node --check src/server.js && node --check src/db/pool.js && node --check src/db/migrate.js && node --check scripts/test-integration.js && node --check test/unit/server.test.js && node --check test/integration/docker.test.js && node --check test/integration/migrate.test.js && node --check test/integration/schema.test.js && node --check test/integration/seed.test.js",
-    "build": "node --check src/server.js && node --check src/db/migrate.js"
+    "lint": "node --check src/server.js && node --check src/db/pool.js && node --check src/db/migrate.js && node --check src/services/auth.js && node --check src/repositories/sessions.js && node --check src/http/middleware/auth.js && node --check scripts/test-integration.js && node --check test/unit/server.test.js && node --check test/integration/docker.test.js && node --check test/integration/migrate.test.js && node --check test/integration/schema.test.js && node --check test/integration/seed.test.js && node --check test/integration/auth.test.js",
+    "build": "node --check src/server.js && node --check src/db/migrate.js && node --check src/services/auth.js && node --check src/repositories/sessions.js && node --check src/http/middleware/auth.js"
   },
   "dependencies": {
     "pg": "8.16.3"

@@ -34,7 +34,12 @@ test('GET /health returns {success:true}', async (t) => {
   let errorOutput = '';
   const child = spawn(process.execPath, ['src/server.js'], {
     cwd: projectRoot,
-    env: { HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'test' },
+    env: {
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      NODE_ENV: 'test',
+      DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
+    },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   child.stderr.setEncoding('utf8');
