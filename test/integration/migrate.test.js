@@ -71,20 +71,23 @@ function cleanup(env) {
   });
 }
 
-test('clean database migrates once and rerun changes nothing', { timeout: 240_000 }, async () => {
+test('DB-002 clean database migrates once and rerun changes nothing', { timeout: 240_000 }, async () => {
   assert.ok(existsSync(composeFile), 'compose.yaml must exist');
   let env;
   try {
     env = await fixture();
 
     const firstRun = compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js'], env);
-    assert.match(firstRun, /Applied 1 migration/);
+    assert.match(firstRun, /Applied 2 migrations/);
 
     const firstState = sql(
       "SELECT version || '|' || name || '|' || checksum || '|' || applied_at FROM schema_migrations ORDER BY version",
       env,
     );
-    assert.match(firstState, /^1\|001_schema_migrations\.sql\|[0-9a-f]{64}\|.+$/);
+    assert.match(
+      firstState,
+      /^1\|001_schema_migrations\.sql\|[0-9a-f]{64}\|.+\n2\|002_initial_schema\.sql\|[0-9a-f]{64}\|.+$/,
+    );
 
     const secondRun = compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js'], env);
     assert.match(secondRun, /Applied 0 migrations/);
