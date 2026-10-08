@@ -261,6 +261,15 @@ test('authenticated profile uses current server-side role', async () => {
   });
 });
 
+test('RBAC-009 role changed mid-session denies the next request', async () => {
+  const current = await login();
+  assert.equal(current.response.status, 200);
+  sql(`UPDATE users SET role = 'PETUGAS', updated_at = now() WHERE id = '${ids.active}'`);
+  assertUnauthenticated(await request('/auth/me', { headers: cookieHeader(current.cookie) }));
+  assert.equal(sql(`SELECT count(*) FROM auth_sessions WHERE user_id = '${ids.active}' AND revoked_at IS NULL`), '0');
+  sql(`UPDATE users SET role = 'ADMIN', updated_at = now() - interval '1 day' WHERE id = '${ids.active}'`);
+});
+
 test('AUTH-006 logout revokes server session, clears cookie, and blocks reuse', async () => {
   const current = await login();
   const csrf = await request('/auth/csrf', { headers: cookieHeader(current.cookie) });
