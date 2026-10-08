@@ -7,6 +7,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      APP_ORIGIN: ${APP_ORIGIN:-}
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
     depends_on:

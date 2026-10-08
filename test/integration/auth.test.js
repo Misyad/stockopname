@@ -63,7 +63,7 @@ async function request(path, options = {}) {
 async function login(email = 'admin@example.test', credential = password) {
   const result = await request('/auth/login', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: env.APP_ORIGIN },
     body: JSON.stringify({ email, password: credential }),
   });
   return { ...result, cookie: result.response.headers.get('set-cookie') };
@@ -99,9 +99,11 @@ let env;
 let firstLogin;
 
 before(async () => {
+  const port = await reservePort();
   env = {
     ...process.env,
-    APP_PORT: String(await reservePort()),
+    APP_PORT: String(port),
+    APP_ORIGIN: `http://127.0.0.1:${port}`,
     COMPOSE_PROJECT_NAME: `stock_opname_auth_${process.pid}`,
     POSTGRES_DB: 'stock_opname_auth_test',
     POSTGRES_USER: 'stock_opname_auth_test',
@@ -215,7 +217,7 @@ test('login rejects malformed, unknown, and oversized input without session', as
   for (const entry of cases) {
     const result = await request('/auth/login', {
       method: 'POST',
-      headers: { 'content-type': entry.contentType },
+      headers: { 'content-type': entry.contentType, origin: env.APP_ORIGIN },
       body: entry.body,
     });
     assert.equal(result.response.status, entry.status);
@@ -261,9 +263,15 @@ test('authenticated profile uses current server-side role', async () => {
 
 test('AUTH-006 logout revokes server session, clears cookie, and blocks reuse', async () => {
   const current = await login();
+  const csrf = await request('/auth/csrf', { headers: cookieHeader(current.cookie) });
+  assert.equal(csrf.response.status, 200);
   const result = await request('/auth/logout', {
     method: 'POST',
-    headers: cookieHeader(current.cookie),
+    headers: {
+      ...cookieHeader(current.cookie),
+      origin: env.APP_ORIGIN,
+      'x-csrf-token': csrf.body.data.csrfToken,
+    },
   });
   assert.equal(result.response.status, 200);
   const cleared = result.response.headers.get('set-cookie');

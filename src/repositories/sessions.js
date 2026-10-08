@@ -2,21 +2,21 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 const ABSOLUTE_SECONDS = 12 * 60 * 60;
 
-function digest(value) {
-  return createHash('sha256').update(value).digest('hex');
+function digest(value, encoding = 'hex') {
+  return createHash('sha256').update(value).digest(encoding);
 }
 
 export async function createSession(client, userId) {
   const id = randomUUID();
   const reference = randomUUID();
   const secret = randomBytes(32).toString('base64url');
-  const csrfSecret = randomBytes(32).toString('base64url');
+  const csrfToken = digest(`csrf:${secret}`, 'base64url');
   await client.query(`
     INSERT INTO auth_sessions (
       id, user_id, reference, secret_hash, csrf_secret_hash,
       expires_at, last_seen_at, created_at
     ) VALUES ($1, $2, $3, $4, $5, now() + interval '12 hours', now(), now())
-  `, [id, userId, reference, digest(secret), digest(csrfSecret)]);
+  `, [id, userId, reference, digest(secret), digest(csrfToken)]);
   return { reference, secret, maxAge: ABSOLUTE_SECONDS };
 }
 
