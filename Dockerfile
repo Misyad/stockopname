@@ -3,8 +3,13 @@ FROM node:22-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 
-COPY --chown=node:node package.json ./
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable \
+  && pnpm install --prod --frozen-lockfile \
+  && pnpm store prune
+
 COPY --chown=node:node src ./src
+COPY --chown=node:node db/migrations ./db/migrations
 
 USER node
 EXPOSE 3000
