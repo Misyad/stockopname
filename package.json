@@ -9,8 +9,9 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test",
-    "lint": "node --check src/server.js && node --check test/unit/server.test.js",
+    "test": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js",
+    "lint": "node --check src/server.js && node --check test/unit/server.test.js && node --check test/integration/docker.test.js",
     "build": "node --check src/server.js"
   }
 }
