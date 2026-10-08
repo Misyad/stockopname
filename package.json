@@ -11,7 +11,7 @@
     "start": "node src/server.js",
     "test": "node --test test/unit/*.test.js",
     "test:integration": "node scripts/test-integration.js",
-    "lint": "node --check src/server.js && node --check src/db/pool.js && node --check src/db/migrate.js && node --check scripts/test-integration.js && node --check test/unit/server.test.js && node --check test/integration/docker.test.js && node --check test/integration/migrate.test.js",
+    "lint": "node --check src/server.js && node --check src/db/pool.js && node --check src/db/migrate.js && node --check scripts/test-integration.js && node --check test/unit/server.test.js && node --check test/integration/docker.test.js && node --check test/integration/migrate.test.js && node --check test/integration/schema.test.js && node --check test/integration/seed.test.js",
     "build": "node --check src/server.js && node --check src/db/migrate.js"
   },
   "dependencies": {
