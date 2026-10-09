@@ -213,12 +213,9 @@ export async function listMasters(pool, actor, kind, options = {}) {
   }
   const status = options.status ? String(options.status).trim().toUpperCase() : null;
   if (status && !statuses[kind]?.has(status)) throw fault(400, 'VALIDATION_ERROR', 'Invalid status filter.');
-  const result = await listMasterRows(pool, kind, {
-    page,
-    limit,
-    q: options.q ? String(options.q).trim() : null,
-    status,
-  });
+  const q = options.q ? String(options.q).trim() : null;
+  if (q && q.length > 100) throw fault(400, 'VALIDATION_ERROR', 'Search query is too long.');
+  const result = await listMasterRows(pool, kind, { page, limit, q, status });
   return { ...result, rows: result.rows.map((row) => publicRow(kind, row)), page, limit };
 }
 

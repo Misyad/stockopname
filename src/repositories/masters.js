@@ -87,8 +87,9 @@ export async function listMasterRows(client, kind, { page, limit, q, status }) {
   const where = [];
   const parameters = [];
   if (q) {
-    parameters.push(`%${q}%`);
-    where.push(`(${search.map((field) => `${field} ILIKE $${parameters.length}`).join(' OR ')})`);
+    const literal = q.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+    parameters.push(`%${literal}%`);
+    where.push(`(${search.map((field) => `${field} ILIKE $${parameters.length} ESCAPE '\\'`).join(' OR ')})`);
   }
   if (status) {
     parameters.push(status);

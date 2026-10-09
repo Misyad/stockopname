@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Master Data — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/masters/products">Barang</a>
+      <a href="/masters/categories">Kategori</a>
+      <a href="/masters/units">Satuan</a>
+      <a href="/masters/unit-aliases">Alias Satuan</a>
+      <a href="/masters/warehouses">Gudang</a>
+      <a href="/masters/suppliers">Supplier</a>
+      <a href="/users">Pengguna</a>
+    </nav>
+  </aside>
+
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Master Data</p>
+        <h1 id="page-title" tabindex="-1">Master Data</h1>
+        <p id="page-description">Kelola referensi operasional tanpa menghapus riwayat.</p>
+      </div>
+      <button id="create-button" class="primary" type="button" hidden>Tambah data</button>
+    </header>
+
+    <section class="panel" aria-labelledby="filter-title">
+      <h2 id="filter-title" class="sr-only">Filter data</h2>
+      <form id="filters" class="filters">
+        <div class="field grow">
+          <label for="search">Cari kode atau nama</label>
+          <input id="search" name="q" type="search" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="status-filter">Status</label>
+          <select id="status-filter" name="status">
+            <option value="">Semua status</option>
+            <option value="ACTIVE">Aktif</option>
+            <option value="INACTIVE">Nonaktif</option>
+            <option value="REVIEW">Perlu review</option>
+          </select>
+        </div>
+        <button type="submit">Terapkan</button>
+      </form>
+    </section>
+
+    <p id="screen-status" role="status" aria-live="polite">Memuat data…</p>
+    <section id="error-state" class="state error" hidden>
+      <h2>Data gagal dimuat</h2>
+      <p id="error-message">Periksa koneksi lalu coba lagi.</p>
+      <button id="retry-button" type="button">Coba lagi</button>
+    </section>
+    <section id="empty-state" class="state" hidden>
+      <h2>Belum ada data</h2>
+      <p>Ubah filter atau tambahkan data baru.</p>
+    </section>
+
+    <section id="results" class="panel" hidden aria-label="Daftar master">
+      <div class="table-scroll" tabindex="0" aria-label="Tabel dapat digulir horizontal">
+        <table>
+          <thead><tr id="table-head"></tr></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+      <div class="pagination" aria-label="Paginasi">
+        <button id="previous-page" type="button">Sebelumnya</button>
+        <span id="page-summary">Halaman 1</span>
+        <button id="next-page" type="button">Berikutnya</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="master-dialog" aria-labelledby="form-title" aria-describedby="form-description">
+    <form id="master-form" method="dialog">
+      <header>
+        <h2 id="form-title">Tambah data</h2>
+        <p id="form-description">Isi field wajib. Data akan divalidasi server.</p>
+      </header>
+      <div id="form-fields"></div>
+      <p id="form-error" class="error-text" role="alert" hidden></p>
+      <footer>
+        <button id="cancel-button" type="button">Batal</button>
+        <button id="save-button" class="primary" type="submit">Simpan</button>
+      </footer>
+    </form>
+  </dialog>
+</body>
+</html>

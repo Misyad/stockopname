@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masuk — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/login.js"></script>
+</head>
+<body class="login-page">
+  <main class="login-shell" id="main">
+    <section class="panel login-card" aria-labelledby="login-title">
+      <p class="eyebrow">SPPG Pakiskembar 2</p>
+      <h1 id="login-title">Masuk</h1>
+      <p>Gunakan akun Stock Opname.</p>
+      <form id="login-form">
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p id="login-error" class="error-text" role="alert" hidden></p>
+        <button id="login-button" class="primary" type="submit">Masuk</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

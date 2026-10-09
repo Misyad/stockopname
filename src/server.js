@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { pool } from './db/pool.js';
 import { authenticate, sessionSecret } from './http/middleware/auth.js';
 import { csrfTokenForSession, validCsrf, validOrigin } from './http/middleware/csrf.js';
 import { createLoginLimiter } from './http/middleware/rate-limit.js';
+import { handleMasterRoute } from './http/router.js';
 import { revokeSession } from './repositories/sessions.js';
 import { login } from './services/auth.js';
 
@@ -11,6 +14,13 @@ const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
 const appOrigin = process.env.APP_ORIGIN;
 const loginLimiter = createLoginLimiter();
+const publicFiles = Object.freeze({
+  '/login': ['login.html', 'text/html; charset=utf-8'],
+  '/login.js': ['login.js', 'text/javascript; charset=utf-8'],
+  '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+});
+const publicDirectory = fileURLToPath(new URL('./public/', import.meta.url));
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535.');
@@ -43,7 +53,10 @@ async function readJson(request) {
     throw Object.assign(new Error('Invalid JSON.'), { status: 400 });
   }
   if (!value || Array.isArray(value) || typeof value !== 'object') {
-    throw Object.assign(new Error('Invalid JSON object.'), { status: 400 });
+    throw Object.assign(new Error('Invalid JSON object.'), {
+      status: 400,
+      errorCode: 'VALIDATION_ERROR',
+    });
   }
   return value;
 }
@@ -52,8 +65,40 @@ function sessionCookie(secret, maxAge) {
   return `session=${encodeURIComponent(secret)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
 }
 
+function isMasterScreen(pathname) {
+  return pathname === '/users'
+    || /^\/masters\/(products|categories|units|unit-aliases|warehouses|suppliers)$/.test(pathname);
+}
+
+async function servePublic(response, pathname) {
+  const asset = isMasterScreen(pathname) ? ['index.html', 'text/html; charset=utf-8'] : publicFiles[pathname];
+  if (!asset) return false;
+  const body = await readFile(`${publicDirectory}${asset[0]}`);
+  const htmlHeaders = asset[1].startsWith('text/html') ? {
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    'Referrer-Policy': 'no-referrer',
+  } : {};
+  response.writeHead(200, {
+    'Content-Type': asset[1],
+    'Content-Length': body.length,
+    'X-Content-Type-Options': 'nosniff',
+    ...htmlHeaders,
+  });
+  response.end(body);
+  return true;
+}
+
 async function route(request, response) {
   const path = new URL(request.url, 'http://localhost').pathname;
+  if (request.method === 'GET' && isMasterScreen(path)) {
+    if (!await authenticate(pool, request)) {
+      response.writeHead(302, { location: '/login', 'cache-control': 'no-store' });
+      response.end();
+      return;
+    }
+  }
+  if (request.method === 'GET' && await servePublic(response, path)) return;
   if (request.method === 'GET' && path === '/health') {
     json(response, 200, { success: true });
     return;
@@ -155,13 +200,23 @@ async function route(request, response) {
     return;
   }
 
+  if (await handleMasterRoute({
+    request, response, pool, appOrigin, json, failure, readJson,
+  })) return;
+
   failure(response, 404, 'NOT_FOUND', 'Route not found.');
 }
 
 const server = createServer((request, response) => {
   route(request, response).catch((error) => {
     if (error.status) {
-      failure(response, error.status, 'INVALID_REQUEST', error.message);
+      failure(
+        response,
+        error.status,
+        error.errorCode || 'INVALID_REQUEST',
+        error.message,
+        error.details || {},
+      );
       return;
     }
     console.error('request_failed');
