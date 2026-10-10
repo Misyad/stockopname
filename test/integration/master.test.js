@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = fileURLToPath(new URL('../..', import.meta.url));
 const composeFile = `${projectRoot}/compose.yaml`;
 const actorId = '30000000-0000-0000-0000-000000000001';
+const supervisorId = '30000000-0000-0000-0000-000000000002';
+const regionB = '30000000-0000-0000-0000-000000000003';
+const warehouseB = '30000000-0000-0000-0000-000000000004';
+const userB = '30000000-0000-0000-0000-000000000005';
 let env;
 
 function compose(args, options = {}) {
@@ -60,9 +64,20 @@ before(async () => {
   compose([
     'exec', '-T', 'database', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
     '-U', env.POSTGRES_USER, '-d', env.POSTGRES_DB,
-    '-c', `INSERT INTO users (id, name, email, password_hash, role, status, created_at, updated_at)
-           VALUES ('${actorId}', 'Admin', 'master-admin@example.test', 'not-used',
-                   'ADMIN', 'ACTIVE', now(), now())`,
+    '-c', `
+      INSERT INTO regions (id, code, name, status, created_at, updated_at)
+      VALUES ('${regionB}', 'REGION-B', 'Region B', 'ACTIVE', now(), now());
+      INSERT INTO users (id, name, email, password_hash, role, status, region_id, created_at, updated_at)
+      VALUES
+        ('${actorId}', 'Admin', 'master-admin@example.test', 'not-used', 'ADMIN', 'ACTIVE',
+         '00000000-0000-0000-0000-000000000001', now(), now()),
+        ('${supervisorId}', 'Supervisor', 'master-supervisor@example.test', 'not-used', 'SUPERVISOR', 'ACTIVE',
+         '00000000-0000-0000-0000-000000000001', now(), now()),
+        ('${userB}', 'Region B User', 'region-b@example.test', 'not-used', 'PETUGAS', 'ACTIVE',
+         '${regionB}', now(), now());
+      INSERT INTO warehouses (id, code, name, status, region_id, created_at, updated_at)
+      VALUES ('${warehouseB}', 'WH-REGION-B', 'Region B Warehouse', 'ACTIVE', '${regionB}', now(), now());
+    `,
   ]);
 });
 
@@ -100,7 +115,7 @@ test('ADMIN creates, updates, and deactivates category with atomic audit', () =>
 test('non-ADMIN master mutation is denied before database mutation', () => {
   assert.equal(runInApp(`
     await assert.rejects(
-      masters.createMaster(pool, { userId: '${actorId}', role: 'SUPERVISOR' }, 'category', {
+      masters.createMaster(pool, { userId: '${supervisorId}', role: 'ADMIN' }, 'category', {
         code: 'DENIED', name: 'Denied', status: 'ACTIVE',
       }),
       (error) => error.status === 403 && error.errorCode === 'FORBIDDEN',
@@ -111,8 +126,66 @@ test('non-ADMIN master mutation is denied before database mutation', () => {
   `), 'PASS');
 });
 
+test('regional warehouse and user masters use authoritative actor region', () => {
+  assert.equal(runInApp(`
+    const forged = { ...admin, regionId: '${regionB}' };
+    const warehouse = await masters.createMaster(pool, forged, 'warehouse', {
+      code: 'WH-REGION-A', name: 'Region A Warehouse', status: 'ACTIVE',
+    });
+    const user = await masters.createMaster(pool, forged, 'user', {
+      name: 'Region A User', email: 'region-a@example.test', password: 'strong regional password',
+      role: 'PETUGAS', status: 'ACTIVE',
+    });
+    assert.equal(warehouse.region_id, '00000000-0000-0000-0000-000000000001');
+    assert.equal(user.region_id, '00000000-0000-0000-0000-000000000001');
+
+    const warehouses = await masters.listMasters(pool, forged, 'warehouse', { page: 1, limit: 100 });
+    const users = await masters.listMasters(pool, forged, 'user', { page: 1, limit: 100 });
+    assert.equal(warehouses.rows.some((row) => row.id === '${warehouseB}'), false);
+    assert.equal(users.rows.some((row) => row.id === '${userB}'), false);
+
+    for (const value of ['${warehouseB}', 'WH-REGION-B']) {
+      await assert.rejects(
+        masters.resolveTransactionMaster(pool, 'warehouse', value, forged),
+        (error) => error.status === 403 && error.errorCode === 'REGION_FORBIDDEN',
+      );
+    }
+
+    const before = await pool.query(
+      \`SELECT (SELECT status FROM warehouses WHERE id = '${warehouseB}') AS warehouse_status,
+              (SELECT status FROM users WHERE id = '${userB}') AS user_status,
+              (SELECT count(*)::int FROM audit_logs WHERE reference IN ('${warehouseB}', '${userB}')) AS audits\`,
+    );
+    for (const [kind, id] of [['warehouse', '${warehouseB}'], ['user', '${userB}']]) {
+      await assert.rejects(
+        masters.updateMaster(pool, forged, kind, id, { name: 'Forbidden Update' }),
+        (error) => error.status === 403 && error.errorCode === 'REGION_FORBIDDEN',
+      );
+      await assert.rejects(
+        masters.deactivateMaster(pool, forged, kind, id),
+        (error) => error.status === 403 && error.errorCode === 'REGION_FORBIDDEN',
+      );
+    }
+    const after = await pool.query(
+      \`SELECT (SELECT status FROM warehouses WHERE id = '${warehouseB}') AS warehouse_status,
+              (SELECT status FROM users WHERE id = '${userB}') AS user_status,
+              (SELECT count(*)::int FROM audit_logs WHERE reference IN ('${warehouseB}', '${userB}')) AS audits\`,
+    );
+    assert.deepEqual(after.rows[0], before.rows[0]);
+
+    await assert.rejects(
+      masters.createMaster(pool, admin, 'warehouse', {
+        code: 'FORGED-REGION', name: 'Forged Region', region_id: '${regionB}',
+      }),
+      (error) => error.status === 400 && error.errorCode === 'VALIDATION_ERROR',
+    );
+    console.log('PASS');
+  `), 'PASS');
+});
+
 test('duplicate code is actionable and failed write leaves no audit', () => {
   assert.equal(runInApp(`
+    const before = await pool.query("SELECT count(*)::int AS count FROM audit_logs WHERE action = 'CREATE_WAREHOUSE'");
     await masters.createMaster(pool, admin, 'warehouse', {
       code: 'WH-01', name: 'Main', location: 'North', status: 'ACTIVE',
     });
@@ -126,7 +199,7 @@ test('duplicate code is actionable and failed write leaves no audit', () => {
       "SELECT (SELECT count(*) FROM warehouses WHERE code = 'WH-01')::int AS rows, "
       + "(SELECT count(*) FROM audit_logs WHERE action = 'CREATE_WAREHOUSE')::int AS audits",
     );
-    assert.deepEqual(state.rows[0], { rows: 1, audits: 1 });
+    assert.deepEqual(state.rows[0], { rows: 1, audits: before.rows[0].count + 1 });
     console.log('PASS');
   `), 'PASS');
 });
@@ -266,15 +339,22 @@ test('master id accepts schema UUIDs and rejects malformed values', () => {
 
 test('audit failure rolls back master mutation atomically', () => {
   assert.equal(runInApp(`
-    await assert.rejects(
-      masters.createMaster(
-        pool,
-        { userId: 'ffffffff-ffff-ffff-ffff-ffffffffffff', role: 'ADMIN' },
-        'category',
-        { code: 'ROLLBACK', name: 'Must Roll Back', status: 'ACTIVE' },
-      ),
-      (error) => error.code === '23503',
-    );
+    await pool.query(\`
+      CREATE FUNCTION fail_master_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'forced audit failure'; END $$;
+      CREATE TRIGGER force_master_audit_failure BEFORE INSERT ON audit_logs
+      FOR EACH ROW WHEN (NEW.module = 'MASTER') EXECUTE FUNCTION fail_master_audit();
+    \`);
+    try {
+      await assert.rejects(
+        masters.createMaster(pool, admin, 'category', {
+          code: 'ROLLBACK', name: 'Must Roll Back', status: 'ACTIVE',
+        }),
+        /forced audit failure/,
+      );
+    } finally {
+      await pool.query('DROP TRIGGER force_master_audit_failure ON audit_logs; DROP FUNCTION fail_master_audit()');
+    }
     const result = await pool.query("SELECT count(*)::int AS count FROM categories WHERE code = 'ROLLBACK'");
     assert.equal(result.rows[0].count, 0);
     console.log('PASS');

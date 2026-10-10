@@ -16,7 +16,7 @@ const DEFINITIONS = Object.freeze({
   },
   warehouse: {
     table: 'warehouses',
-    fields: ['code', 'name', 'location', 'status'],
+    fields: ['code', 'name', 'location', 'status', 'region_id'],
     search: ['code', 'name', 'location'],
   },
   supplier: {
@@ -34,7 +34,7 @@ const DEFINITIONS = Object.freeze({
   },
   user: {
     table: 'users',
-    fields: ['name', 'email', 'password_hash', 'role', 'status'],
+    fields: ['name', 'email', 'password_hash', 'role', 'status', 'region_id'],
     search: ['name', 'email'],
   },
 });
@@ -82,7 +82,7 @@ export async function updateMasterRow(client, kind, id, values) {
   return result.rows[0] || null;
 }
 
-export async function listMasterRows(client, kind, { page, limit, q, status }) {
+export async function listMasterRows(client, kind, { page, limit, q, status, regionId }) {
   const { table, search } = definitionFor(kind);
   const where = [];
   const parameters = [];
@@ -94,6 +94,10 @@ export async function listMasterRows(client, kind, { page, limit, q, status }) {
   if (status) {
     parameters.push(status);
     where.push(`status = $${parameters.length}`);
+  }
+  if ((kind === 'warehouse' || kind === 'user') && regionId) {
+    parameters.push(regionId);
+    where.push(`region_id = $${parameters.length}`);
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const count = await client.query(`SELECT count(*)::int AS total FROM ${table} ${clause}`, parameters);

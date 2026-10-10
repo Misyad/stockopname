@@ -159,7 +159,8 @@ async function route(request, response) {
       failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
       return;
     }
-    json(response, 200, { success: true, data: user, message: 'OK' });
+    const { userId, email, role } = user;
+    json(response, 200, { success: true, data: { userId, email, role }, message: 'OK' });
     return;
   }
 

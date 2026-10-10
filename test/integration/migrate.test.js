@@ -78,7 +78,7 @@ test('DB-002 clean database migrates once and rerun changes nothing', { timeout:
     env = await fixture();
 
     const firstRun = compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js'], env);
-    assert.match(firstRun, /Applied 2 migrations/);
+    assert.match(firstRun, /Applied 3 migrations/);
 
     const firstState = sql(
       "SELECT version || '|' || name || '|' || checksum || '|' || applied_at FROM schema_migrations ORDER BY version",
@@ -86,7 +86,7 @@ test('DB-002 clean database migrates once and rerun changes nothing', { timeout:
     );
     assert.match(
       firstState,
-      /^1\|001_schema_migrations\.sql\|[0-9a-f]{64}\|.+\n2\|002_initial_schema\.sql\|[0-9a-f]{64}\|.+$/,
+      /^1\|001_schema_migrations\.sql\|[0-9a-f]{64}\|.+\n2\|002_initial_schema\.sql\|[0-9a-f]{64}\|.+\n3\|003_regions_and_transaction_idempotency\.sql\|[0-9a-f]{64}\|.+$/,
     );
 
     const secondRun = compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js'], env);

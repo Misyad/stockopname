@@ -149,13 +149,30 @@ function duplicateError(kind, error) {
   return fault(409, 'DUPLICATE_CODE', `${kind} code already exists.`);
 }
 
+async function currentActor(client, actor) {
+  if (!actor?.userId) return null;
+  const result = await client.query(
+    "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE'",
+    [actor.userId],
+  );
+  const row = result.rows[0];
+  return row ? { userId: row.id, role: row.role, regionId: row.region_id } : null;
+}
+
+function assertSameRegion(actor, row) {
+  if (row.region_id !== actor.regionId) {
+    throw fault(403, 'REGION_FORBIDDEN', 'Resource is outside the user region.');
+  }
+}
+
 async function mutate(pool, actor, kind, action, operation) {
-  authorize(actor, kind === 'user' ? CAPABILITIES.USER_MUTATE : CAPABILITIES.MASTER_MUTATE);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const row = await operation(client);
-    await insertMasterAudit(client, actor.userId, `${action}_${kind.replace(/([A-Z])/g, '_$1').toUpperCase()}`, row.id, {
+    const resolvedActor = await currentActor(client, actor);
+    authorize(resolvedActor, kind === 'user' ? CAPABILITIES.USER_MUTATE : CAPABILITIES.MASTER_MUTATE);
+    const row = await operation(client, resolvedActor);
+    await insertMasterAudit(client, resolvedActor.userId, `${action}_${kind.replace(/([A-Z])/g, '_$1').toUpperCase()}`, row.id, {
       id: row.id,
       status: row.status,
     });
@@ -170,8 +187,9 @@ async function mutate(pool, actor, kind, action, operation) {
 }
 
 export async function createMaster(pool, actor, kind, input) {
-  return mutate(pool, actor, kind, 'CREATE', async (client) => {
+  return mutate(pool, actor, kind, 'CREATE', async (client, resolvedActor) => {
     const values = normalized(kind, input, true);
+    if (kind === 'warehouse' || kind === 'user') values.region_id = resolvedActor.regionId;
     await validateReferences(client, kind, values);
     if (kind === 'user') {
       values.password_hash = await passwordHash(values.password);
@@ -182,7 +200,7 @@ export async function createMaster(pool, actor, kind, input) {
 }
 
 export async function updateMaster(pool, actor, kind, id, input) {
-  return mutate(pool, actor, kind, 'UPDATE', async (client) => {
+  return mutate(pool, actor, kind, 'UPDATE', async (client, resolvedActor) => {
     assertUuid(id);
     if (kind === 'user' && Object.hasOwn(input, 'password')) {
       throw fault(400, 'VALIDATION_ERROR', 'Password update uses a dedicated operation.');
@@ -190,22 +208,25 @@ export async function updateMaster(pool, actor, kind, id, input) {
     const values = normalized(kind, input, false);
     const current = await findMasterById(client, kind, id, true);
     if (!current) throw fault(404, 'MASTER_NOT_FOUND', 'Master record not found.');
+    if (kind === 'warehouse' || kind === 'user') assertSameRegion(resolvedActor, current);
     await validateReferences(client, kind, values);
     return updateMasterRow(client, kind, id, values);
   });
 }
 
 export async function deactivateMaster(pool, actor, kind, id) {
-  return mutate(pool, actor, kind, 'DEACTIVATE', async (client) => {
+  return mutate(pool, actor, kind, 'DEACTIVATE', async (client, resolvedActor) => {
     assertUuid(id);
     const current = await findMasterById(client, kind, id, true);
     if (!current) throw fault(404, 'MASTER_NOT_FOUND', 'Master record not found.');
+    if (kind === 'warehouse' || kind === 'user') assertSameRegion(resolvedActor, current);
     return updateMasterRow(client, kind, id, { status: 'INACTIVE' });
   });
 }
 
 export async function listMasters(pool, actor, kind, options = {}) {
-  authorize(actor, kind === 'user' ? CAPABILITIES.USER_MUTATE : CAPABILITIES.MASTER_READ);
+  const resolvedActor = await currentActor(pool, actor);
+  authorize(resolvedActor, kind === 'user' ? CAPABILITIES.USER_MUTATE : CAPABILITIES.MASTER_READ);
   const page = Number(options.page ?? 1);
   const limit = Number(options.limit ?? 25);
   if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -215,11 +236,13 @@ export async function listMasters(pool, actor, kind, options = {}) {
   if (status && !statuses[kind]?.has(status)) throw fault(400, 'VALIDATION_ERROR', 'Invalid status filter.');
   const q = options.q ? String(options.q).trim() : null;
   if (q && q.length > 100) throw fault(400, 'VALIDATION_ERROR', 'Search query is too long.');
-  const result = await listMasterRows(pool, kind, { page, limit, q, status });
+  const result = await listMasterRows(pool, kind, {
+    page, limit, q, status, regionId: resolvedActor.regionId,
+  });
   return { ...result, rows: result.rows.map((row) => publicRow(kind, row)), page, limit };
 }
 
-export async function resolveTransactionMaster(pool, kind, value) {
+export async function resolveTransactionMaster(pool, kind, value, actor = null) {
   const errorCodes = {
     category: 'CATEGORY_NOT_FOUND',
     unit: 'UNIT_NOT_FOUND',
@@ -232,5 +255,10 @@ export async function resolveTransactionMaster(pool, kind, value) {
   }
   const row = await findActiveReference(pool, kind, value);
   if (!row) throw fault(422, errorCodes[kind], `${kind} reference is not active or does not exist.`);
+  if (kind === 'warehouse') {
+    const resolvedActor = await currentActor(pool, actor);
+    authorize(resolvedActor, CAPABILITIES.STOCK_READ);
+    assertSameRegion(resolvedActor, row);
+  }
   return row;
 }

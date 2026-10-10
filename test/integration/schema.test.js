@@ -92,17 +92,18 @@ const schemaContract = {
   import_batches: 'id:u! import_type:v file_name:v! file_hash:v! preview_version:b!=1 status:v row_count:i!=0 created_by:u! created_at:z! confirmed_at:z',
   products: 'id:u! code:v! barcode:v name:v! category_id:u! base_unit_id:u! purchase_unit_id:u conversion_factor:n! minimum_stock:n!=0 maximum_stock:n!=0 photo_url:t status:v created_at:z updated_at:z',
   ready_import_rows: 'id:u! import_batch_id:u! row_number:i! file_hash:v! date:d reference:v supplier:v warehouse:v code:v batch:v production_date:d expiry:d quantity:n unit:v price:n notes:t status:v error_code:v error_message:t created_at:z',
+  regions: 'id:u! code:v! name:v! status:v created_at:z updated_at:z',
   staging_ocr_lines: 'id:u! import_batch_id:u! file_hash:v! source_pdf:v page:i category:v description_raw:t quantity:n unit_raw:v unit_price:n line_total:n review_status:v notes:t created_by:u created_at:z',
   stock_balances: 'id:u! product_id:u! warehouse_id:u! quantity:n! version:b!=0 updated_at:z',
   stock_batches: 'id:u! product_id:u! warehouse_id:u! batch_number:v production_date:d expiry_date:d quantity:n! unit:v! purchase_price:n!=0 status:v created_at:z updated_at:z',
   stock_opname_items: 'id:u! opname_id:u! product_id:u! batch_id:u system_quantity:n! physical_quantity:n difference:n difference_value:n unit:v! unit_price:n!=0 reason:t notes:t',
   stock_opnames: 'id:u! opname_number:v! warehouse_id:u! opname_date:d! status:v snapshot_at:z! snapshot_version:b! created_by:u! submitted_at:z approved_by:u approved_at:z rejection_reason:t notes:t created_at:z updated_at:z',
-  stock_transactions: 'id:u! idempotency_key:v! transaction_number:v! transaction_type:v reference_id:v! product_id:u! warehouse_id:u! batch_id:u supplier_id:u quantity:n! unit:v! balance_before:n! balance_after:n! reason:t user_id:u! created_at:z!',
+  stock_transactions: 'id:u! idempotency_key:v! transaction_number:v! transaction_type:v reference_id:v! product_id:u! warehouse_id:u! batch_id:u supplier_id:u quantity:n! unit:v! balance_before:n! balance_after:n! reason:t user_id:u! created_at:z! transaction_date:d!=CURRENT_DATE request_hash:v!=',
   suppliers: 'id:u! code:v! name:v! phone:v address:t status:v created_at:z updated_at:z',
   unit_aliases: 'id:u! alias:v! unit_id:u! status:v created_at:z updated_at:z',
   units: 'id:u! code:v! name:v! symbol:v! base_unit_id:u conversion_to_base:n! status:v created_at:z updated_at:z',
-  users: 'id:u! name:v! email:v! password_hash:v! role:v status:v created_at:z updated_at:z',
-  warehouses: 'id:u! code:v! name:v! location:t status:v created_at:z updated_at:z',
+  users: 'id:u! name:v! email:v! password_hash:v! role:v status:v created_at:z updated_at:z region_id:u!=00000000-0000-0000-0000-000000000001',
+  warehouses: 'id:u! code:v! name:v! location:t status:v created_at:z updated_at:z region_id:u!=00000000-0000-0000-0000-000000000001',
 };
 const expectedDefinitions = new Map();
 const expectedColumns = new Map(Object.entries(schemaContract).map(([table, contract]) => {
@@ -130,11 +131,12 @@ const expectedForeignKeys = [
   'stock_transactions.batch_id->stock_batches.id', 'stock_transactions.product_id->products.id',
   'stock_transactions.supplier_id->suppliers.id', 'stock_transactions.user_id->users.id',
   'stock_transactions.warehouse_id->warehouses.id', 'unit_aliases.unit_id->units.id',
-  'units.base_unit_id->units.id',
+  'units.base_unit_id->units.id', 'users.region_id->regions.id',
+  'warehouses.region_id->regions.id',
 ].sort();
 
 const expectedChecks = [
-  'backup_logs_status_check', 'categories_status_check',
+  'backup_logs_status_check', 'categories_status_check', 'regions_status_check',
   'import_batches_import_type_check', 'import_batches_row_count_check', 'import_batches_status_check',
   'products_conversion_factor_check', 'products_maximum_stock_check',
   'products_minimum_stock_check', 'products_status_check',
@@ -151,7 +153,8 @@ const expectedChecks = [
 const expectedUniques = [
   'auth_sessions_reference_key', 'auth_sessions_secret_hash_key', 'categories_code_key',
   'import_batches_file_hash_import_type_key', 'products_barcode_key', 'products_code_key',
-  'ready_import_rows_file_hash_row_number_key', 'stock_balances_product_id_warehouse_id_key',
+  'ready_import_rows_file_hash_row_number_key', 'regions_code_key',
+  'stock_balances_product_id_warehouse_id_key',
   'stock_opnames_opname_number_key', 'stock_transactions_idempotency_key_key',
   'suppliers_code_key', 'unit_aliases_alias_key', 'units_code_key', 'users_email_key',
   'warehouses_code_key',
@@ -164,7 +167,8 @@ const requiredIndexPaths = [
   'stock_balances(product_id,warehouse_id)', 'stock_batches(product_id,warehouse_id,expiry_date)',
   'stock_opname_items(opname_id)', 'stock_opnames(warehouse_id,status)',
   'stock_transactions(created_at)', 'stock_transactions(product_id,warehouse_id,created_at)',
-  'stock_transactions(reference_id)',
+  'stock_transactions(reference_id)', 'stock_transactions(warehouse_id,created_at)',
+  'users(region_id)', 'warehouses(region_id)',
 ].sort();
 
 let env;

@@ -96,11 +96,10 @@ test('RBAC-012 SUPERVISOR can approve opname they counted', () => {
   assert.equal(can(supervisor, CAPABILITIES.OPNAME_APPROVE, { created_by: supervisor.userId }), true);
 });
 
-test('warehouse and supplier access is global by role', () => {
-  for (const warehouseId of ['warehouse-a', 'warehouse-b']) {
-    assert.equal(can(petugas, CAPABILITIES.STOCK_READ, { warehouseId }), true);
-    assert.equal(can(petugas, CAPABILITIES.STOCK_MOVE, { warehouseId }), true);
-  }
+test('warehouse region is enforced outside role-only policy', () => {
+  assert.equal(can(petugas, CAPABILITIES.STOCK_READ), true);
+  assert.equal(can(petugas, CAPABILITIES.STOCK_MOVE), true);
+  assert.equal(Object.hasOwn(petugas, 'regionId'), false);
 });
 
 test('blind PETUGAS projection omits protected quantities', () => {

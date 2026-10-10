@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomBytes, scryptSync } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { verifyPassword } from '../../src/services/auth.js';
+
 import { createServer as createTcpServer } from 'node:net';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -16,12 +17,13 @@ const ids = {
 const password = 'correct horse battery staple';
 const newPassword = 'replacement horse battery staple';
 
-function compose(args, env) {
+function compose(args, env, options = {}) {
   return execFileSync('docker', ['compose', '-f', composeFile, ...args], {
     cwd: projectRoot,
     env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    ...options,
   });
 }
 
@@ -250,8 +252,21 @@ test('AUTH-004, AUTH-005 missing, expired, idle, and revoked sessions return 401
   }
 });
 
-test('authenticated profile uses current server-side role', async () => {
+test('session actor includes authoritative region while public profile stays stable', async () => {
   const current = await login();
+  const secret = decodeURIComponent(sessionSecret(current.cookie));
+  const script = `
+    import { pool } from './src/db/pool.js';
+    import { resolveSession } from './src/repositories/sessions.js';
+    try { console.log(JSON.stringify(await resolveSession(pool, ${JSON.stringify(secret)}))); }
+    finally { await pool.end(); }
+  `;
+  const actor = JSON.parse(compose(['exec', '-T', 'app', 'node', '--input-type=module', '-'], env, {
+    input: script,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }));
+  assert.equal(actor.regionId, '00000000-0000-0000-0000-000000000001');
+
   const result = await request('/auth/me', { headers: cookieHeader(current.cookie) });
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body.data, {

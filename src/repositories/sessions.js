@@ -27,7 +27,7 @@ export async function resolveSession(pool, secret) {
     await client.query('BEGIN');
     const result = await client.query(`
       SELECT sessions.id, sessions.user_id, sessions.created_at,
-             users.email, users.role, users.status,
+             users.email, users.role, users.status, users.region_id,
              now() >= sessions.expires_at AS absolute_expired,
              COALESCE(sessions.last_seen_at, sessions.created_at)
                <= now() - interval '30 minutes' AS idle_expired,
@@ -57,7 +57,12 @@ export async function resolveSession(pool, secret) {
     }
     await client.query('UPDATE auth_sessions SET last_seen_at = now() WHERE id = $1', [session.id]);
     await client.query('COMMIT');
-    return { userId: session.user_id, email: session.email, role: session.role };
+    return {
+      userId: session.user_id,
+      email: session.email,
+      role: session.role,
+      regionId: session.region_id,
+    };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
