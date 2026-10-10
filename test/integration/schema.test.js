@@ -98,7 +98,7 @@ const schemaContract = {
   stock_batches: 'id:u! product_id:u! warehouse_id:u! batch_number:v production_date:d expiry_date:d quantity:n! unit:v! purchase_price:n!=0 status:v created_at:z updated_at:z',
   stock_opname_items: 'id:u! opname_id:u! product_id:u! batch_id:u system_quantity:n! physical_quantity:n difference:n difference_value:n unit:v! unit_price:n!=0 reason:t notes:t',
   stock_opnames: 'id:u! opname_number:v! warehouse_id:u! opname_date:d! status:v snapshot_at:z! snapshot_version:b! created_by:u! submitted_at:z approved_by:u approved_at:z rejection_reason:t notes:t created_at:z updated_at:z',
-  stock_transactions: 'id:u! idempotency_key:v! transaction_number:v! transaction_type:v reference_id:v! product_id:u! warehouse_id:u! batch_id:u supplier_id:u quantity:n! unit:v! balance_before:n! balance_after:n! reason:t user_id:u! created_at:z! transaction_date:d!=CURRENT_DATE request_hash:v!=',
+  stock_transactions: "id:u! idempotency_key:v! transaction_number:v! transaction_type:v reference_id:v! product_id:u! warehouse_id:u! batch_id:u supplier_id:u quantity:n! unit:v! balance_before:n! balance_after:n! reason:t user_id:u! created_at:z! transaction_date:d!=CURRENT_DATE request_hash:v!= ledger_sequence:b!=nextval('stock_transactions_ledger_sequence_seq'::regclass)",
   suppliers: 'id:u! code:v! name:v! phone:v address:t status:v created_at:z updated_at:z',
   unit_aliases: 'id:u! alias:v! unit_id:u! status:v created_at:z updated_at:z',
   units: 'id:u! code:v! name:v! symbol:v! base_unit_id:u conversion_to_base:n! status:v created_at:z updated_at:z',
@@ -167,7 +167,8 @@ const requiredIndexPaths = [
   'stock_balances(product_id,warehouse_id)', 'stock_batches(product_id,warehouse_id,expiry_date)',
   'stock_opname_items(opname_id)', 'stock_opnames(warehouse_id,status)',
   'stock_transactions(created_at)', 'stock_transactions(product_id,warehouse_id,created_at)',
-  'stock_transactions(reference_id)', 'stock_transactions(warehouse_id,created_at)',
+  'stock_transactions(ledger_sequence)', 'stock_transactions(reference_id)',
+  'stock_transactions(warehouse_id,created_at)',
   'users(region_id)', 'warehouses(region_id)',
 ].sort();
 

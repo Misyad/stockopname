@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { authorize, CAPABILITIES } from '../http/middleware/rbac.js';
+import { runInventoryMutation } from './inventory.js';
 
 const allowedFields = new Set([
   'idempotencyKey', 'date', 'reference', 'warehouse', 'code', 'batch',
@@ -128,9 +129,7 @@ function response(row) {
 
 export async function createOpeningStock(pool, sessionActor, rawInput) {
   const input = normalize(rawInput);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const transaction = await runInventoryMutation(pool, input.idempotencyKey, async (client) => {
     const actorResult = await client.query(
       "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE' FOR SHARE",
       [sessionActor?.userId],
@@ -163,64 +162,47 @@ export async function createOpeningStock(pool, sessionActor, rawInput) {
       quantity: baseQuantity, unitId: product.base_unit_id, price, notes: input.notes,
     });
     const requestHash = createHash('sha256').update(canonical).digest('hex');
-
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`idempotency:${input.idempotencyKey}`]);
-    const prior = await client.query('SELECT * FROM stock_transactions WHERE idempotency_key = $1', [input.idempotencyKey]);
-    if (prior.rows[0]) {
-      if (prior.rows[0].request_hash !== requestHash) {
-        throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different payload.');
-      }
-      await client.query('COMMIT');
-      return response(prior.rows[0]);
-    }
-
-    await client.query(
-      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-      [`stock:${product.id}:${warehouse.id}`],
-    );
-    const ledger = await client.query(
-      'SELECT 1 FROM stock_transactions WHERE product_id = $1 AND warehouse_id = $2 LIMIT 1',
-      [product.id, warehouse.id],
-    );
-    if (ledger.rowCount) throw fault(409, 'OPENING_ALREADY_EXISTS', 'Stock ledger already exists for product and warehouse.');
-
-    const batchId = randomUUID();
-    await client.query(`
-      INSERT INTO stock_batches (
-        id, product_id, warehouse_id, batch_number, production_date, expiry_date,
-        quantity, unit, purchase_price, status, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', now(), now())
-    `, [batchId, product.id, warehouse.id, input.batch, input.productionDate, input.expiry,
-      baseQuantity, product.base_unit_code, price]);
-    await client.query(`
-      INSERT INTO stock_balances (id, product_id, warehouse_id, quantity, version, updated_at)
-      VALUES ($1, $2, $3, $4, 1, now())
-    `, [randomUUID(), product.id, warehouse.id, baseQuantity]);
-
     const transactionId = randomUUID();
-    const transactionNumber = `OPEN-${transactionId}`;
-    const inserted = await client.query(`
-      INSERT INTO stock_transactions (
-        id, idempotency_key, transaction_number, transaction_type, transaction_date,
-        request_hash, reference_id, product_id, warehouse_id, batch_id, quantity, unit,
-        balance_before, balance_after, reason, user_id, created_at
-      ) VALUES ($1, $2, $3, 'OPENING', $4, $5, $6, $7, $8, $9, $10, $11, 0, $10, $12, $13, now())
-      RETURNING *
-    `, [transactionId, input.idempotencyKey, transactionNumber, input.date, requestHash,
-      input.reference, product.id, warehouse.id, batchId, baseQuantity, product.base_unit_code,
-      input.notes, actorRow.id]);
-    await client.query(`
-      INSERT INTO audit_logs (id, timestamp, user_id, action, module, reference, details)
-      VALUES ($1, now(), $2, 'OPENING_STOCK', 'INVENTORY', $3, $4::jsonb)
-    `, [randomUUID(), actorRow.id, transactionId, JSON.stringify({
-      productId: product.id, warehouseId: warehouse.id, quantity: baseQuantity,
-    })]);
-    await client.query('COMMIT');
-    return response(inserted.rows[0]);
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+    return {
+      requestHash,
+      productId: product.id,
+      warehouseId: warehouse.id,
+      requireEmptyLedger: true,
+      batch: {
+        productId: product.id,
+        warehouseId: warehouse.id,
+        batchNumber: input.batch,
+        productionDate: input.productionDate,
+        expiryDate: input.expiry,
+        quantity: baseQuantity,
+        unit: product.base_unit_code,
+        purchasePrice: price,
+      },
+      balance: {
+        productId: product.id,
+        warehouseId: warehouse.id,
+        quantity: baseQuantity,
+      },
+      transaction: {
+        id: transactionId,
+        transactionNumber: `OPEN-${transactionId}`,
+        transactionType: 'OPENING',
+        transactionDate: input.date,
+        referenceId: input.reference,
+        quantity: baseQuantity,
+        unit: product.base_unit_code,
+        balanceBefore: '0',
+        balanceAfter: baseQuantity,
+        reason: input.notes,
+        userId: actorRow.id,
+      },
+      auditAction: 'OPENING_STOCK',
+      auditDetails: {
+        productId: product.id,
+        warehouseId: warehouse.id,
+        quantity: baseQuantity,
+      },
+    };
+  });
+  return response(transaction);
 }

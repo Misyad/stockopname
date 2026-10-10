@@ -11,6 +11,7 @@ const ids = {
   regionA: '51000000-0000-0000-0000-000000000001',
   regionB: '51000000-0000-0000-0000-000000000002',
   admin: '51000000-0000-0000-0000-000000000010',
+  admin2: '51000000-0000-0000-0000-000000000013',
   supervisor: '51000000-0000-0000-0000-000000000011',
   petugas: '51000000-0000-0000-0000-000000000012',
   category: '51000000-0000-0000-0000-000000000020',
@@ -23,6 +24,7 @@ const ids = {
   productRollback: '51000000-0000-0000-0000-000000000052',
   productConcurrent: '51000000-0000-0000-0000-000000000053',
   productHttp: '51000000-0000-0000-0000-000000000054',
+  productOrphan: '51000000-0000-0000-0000-000000000055',
 };
 const password = 'correct horse battery staple';
 let env;
@@ -126,6 +128,7 @@ before(async () => {
       ('${ids.regionB}', 'B', 'Region B', 'ACTIVE', now(), now());
     INSERT INTO users (id, name, email, password_hash, role, status, region_id, created_at, updated_at) VALUES
       ('${ids.admin}', 'Admin', 'opening-admin@example.test', '${passwordHash(password)}', 'ADMIN', 'ACTIVE', '${ids.regionA}', now(), now()),
+      ('${ids.admin2}', 'Admin 2', 'opening-admin2@example.test', '${passwordHash(password)}', 'ADMIN', 'ACTIVE', '${ids.regionA}', now(), now()),
       ('${ids.supervisor}', 'Supervisor', 'opening-supervisor@example.test', '${passwordHash(password)}', 'SUPERVISOR', 'ACTIVE', '${ids.regionA}', now(), now()),
       ('${ids.petugas}', 'Petugas', 'opening-petugas@example.test', '${passwordHash(password)}', 'PETUGAS', 'ACTIVE', '${ids.regionA}', now(), now());
     INSERT INTO categories (id, code, name, status, created_at, updated_at)
@@ -144,7 +147,8 @@ before(async () => {
       ('${ids.productExisting}', 'OPEN-E', 'Existing', '${ids.category}', '${ids.kg}', '${ids.box}', 10, 0, 100, 'ACTIVE', now(), now()),
       ('${ids.productRollback}', 'OPEN-R', 'Rollback', '${ids.category}', '${ids.kg}', '${ids.box}', 10, 0, 100, 'ACTIVE', now(), now()),
       ('${ids.productConcurrent}', 'OPEN-C', 'Concurrent', '${ids.category}', '${ids.kg}', '${ids.box}', 10, 0, 100, 'ACTIVE', now(), now()),
-      ('${ids.productHttp}', 'OPEN-H', 'HTTP', '${ids.category}', '${ids.kg}', '${ids.box}', 10, 0, 100, 'ACTIVE', now(), now());
+      ('${ids.productHttp}', 'OPEN-H', 'HTTP', '${ids.category}', '${ids.kg}', '${ids.box}', 10, 0, 100, 'ACTIVE', now(), now()),
+      ('${ids.productOrphan}', 'OPEN-O', 'Orphan', '${ids.category}', '${ids.kg}', '${ids.box}', 10, 0, 100, 'ACTIVE', now(), now());
   `);
 });
 
@@ -232,6 +236,85 @@ test('OPEN-001/010 opening commits ledger, batch, balance, audit using base quan
   `), 'PASS');
 });
 
+test('CORE-001 reconciliation reports consistent state and detects temporary drift', () => {
+  assert.equal(runInApp(`
+    const { inventoryReconciliation } = await import('./src/services/inventory.js');
+    const client = await pool.connect();
+    try {
+      const consistent = await inventoryReconciliation(client, ids.productA, ids.warehouseA);
+      assert.deepEqual(consistent, {
+        ledgerCount: 1, batchCount: 1, balanceCount: 1,
+        ledgerQuantity: '20', batchQuantity: '20', balanceQuantity: '20',
+        ledgerChainValid: true, reconciled: true,
+      });
+      await client.query('BEGIN');
+      await client.query(
+        'UPDATE stock_balances SET quantity = 19 WHERE product_id = $1 AND warehouse_id = $2',
+        [ids.productA, ids.warehouseA],
+      );
+      const drifted = await inventoryReconciliation(client, ids.productA, ids.warehouseA);
+      assert.equal(drifted.reconciled, false);
+      assert.equal(drifted.balanceQuantity, '19');
+      await client.query(\`
+        INSERT INTO stock_transactions (
+          id, idempotency_key, transaction_number, transaction_type, reference_id,
+          product_id, warehouse_id, quantity, unit, balance_before, balance_after,
+          user_id, created_at
+        ) VALUES (
+          gen_random_uuid(), 'reconciliation-chain-drift', 'DRIFT-1', 'IN', 'DRIFT',
+          $1, $2, 1, 'kg', 999, 1000, $3, now()
+        )
+      \`, [ids.productA, ids.warehouseA, ids.admin]);
+      const brokenChain = await inventoryReconciliation(client, ids.productA, ids.warehouseA);
+      assert.equal(brokenChain.ledgerChainValid, false);
+      assert.equal(brokenChain.reconciled, false);
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+    console.log('PASS');
+  `), 'PASS');
+});
+
+test('CORE-003 reconciliation rejects empty state and follows ledger insertion order', () => {
+  assert.equal(runInApp(`
+    const { inventoryReconciliation } = await import('./src/services/inventory.js');
+    const client = await pool.connect();
+    try {
+      const empty = await inventoryReconciliation(client, ids.productRollback, ids.warehouseA);
+      assert.equal(empty.reconciled, false);
+      await client.query('BEGIN');
+      await client.query(\`
+        INSERT INTO stock_batches (
+          id, product_id, warehouse_id, batch_number, quantity, unit, purchase_price, status
+        ) VALUES (gen_random_uuid(), $1, $2, 'ORDERED', 2, 'KG', 0, 'ACTIVE')
+      \`, [ids.productRollback, ids.warehouseA]);
+      await client.query(\`
+        INSERT INTO stock_balances (id, product_id, warehouse_id, quantity, version)
+        VALUES (gen_random_uuid(), $1, $2, 2, 1)
+      \`, [ids.productRollback, ids.warehouseA]);
+      await client.query(\`
+        INSERT INTO stock_transactions (
+          id, idempotency_key, transaction_number, transaction_type, reference_id,
+          product_id, warehouse_id, quantity, unit, balance_before, balance_after,
+          user_id, created_at
+        ) VALUES
+          ('ffffffff-ffff-ffff-ffff-ffffffffffff', 'ordered-1', 'ORDERED-1', 'IN', 'ORDERED',
+           $1, $2, 1, 'KG', 0, 1, $3, '2026-10-09T00:00:00Z'),
+          ('00000000-0000-0000-0000-000000000002', 'ordered-2', 'ORDERED-2', 'IN', 'ORDERED',
+           $1, $2, 1, 'KG', 1, 2, $3, '2026-10-09T00:00:00Z')
+      \`, [ids.productRollback, ids.warehouseA, ids.admin]);
+      const ordered = await inventoryReconciliation(client, ids.productRollback, ids.warehouseA);
+      assert.equal(ordered.ledgerChainValid, true);
+      assert.equal(ordered.reconciled, true);
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+    console.log('PASS');
+  `), 'PASS');
+});
+
 test('OPEN-006/007 retry is stable; changed payload conflicts without mutation', () => {
   assert.equal(runInApp(`
     const same = await createOpeningStock(pool, admin, ${JSON.stringify(opening({
@@ -245,6 +328,41 @@ test('OPEN-006/007 retry is stable; changed payload conflicts without mutation',
     );
     const count = await pool.query('SELECT count(*)::int AS count FROM stock_transactions WHERE product_id = $1', [ids.productA]);
     assert.equal(count.rows[0].count, 1);
+    console.log('PASS');
+  `), 'PASS');
+});
+
+test('OPEN-011 idempotency retry never exposes another actor transaction', () => {
+  assert.equal(runInApp(`
+    const admin2 = { userId: ids.admin2, role: 'ADMIN', regionId: ids.regionA };
+    await assert.rejects(
+      createOpeningStock(pool, admin2, ${JSON.stringify(opening())}),
+      (error) => error.status === 409 && error.errorCode === 'IDEMPOTENCY_CONFLICT',
+    );
+    console.log('PASS');
+  `), 'PASS');
+});
+
+test('CORE-004 orphan balance fails as reconciliation conflict without mutation', () => {
+  sql(`
+    INSERT INTO stock_balances (id, product_id, warehouse_id, quantity, version)
+    VALUES (gen_random_uuid(), '${ids.productOrphan}', '${ids.warehouseA}', 7, 1)
+  `);
+  assert.equal(runInApp(`
+    await assert.rejects(
+      createOpeningStock(pool, admin, ${JSON.stringify(opening({
+        idempotencyKey: 'opening-orphan', code: 'OPEN-O', reference: 'ORPHAN-001',
+      }))}),
+      (error) => error.status === 409 && error.errorCode === 'INVENTORY_RECONCILIATION_FAILED',
+    );
+    const state = await pool.query(\`
+      SELECT
+        (SELECT count(*)::int FROM stock_transactions WHERE product_id = $1) AS ledgers,
+        (SELECT count(*)::int FROM stock_batches WHERE product_id = $1) AS batches,
+        (SELECT count(*)::int FROM stock_balances WHERE product_id = $1) AS balances,
+        (SELECT quantity::text FROM stock_balances WHERE product_id = $1) AS quantity
+    \`, [ids.productOrphan]);
+    assert.deepEqual(state.rows[0], { ledgers: 0, batches: 0, balances: 1, quantity: '7' });
     console.log('PASS');
   `), 'PASS');
 });
@@ -336,6 +454,40 @@ test('OPEN-008 audit failure rolls back ledger, batch, and balance', () => {
     `), 'PASS');
   } finally {
     sql('DROP TRIGGER reject_opening_audit ON audit_logs; DROP FUNCTION reject_opening_audit()');
+  }
+});
+
+test('CORE-002 reconciliation failure rolls back ledger, batch, balance, and audit', () => {
+  sql(`
+    CREATE FUNCTION corrupt_opening_batch() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.product_id = '${ids.productRollback}' THEN NEW.quantity = NEW.quantity + 1; END IF;
+      RETURN NEW;
+    END $$;
+    CREATE TRIGGER corrupt_opening_batch BEFORE INSERT ON stock_batches
+      FOR EACH ROW EXECUTE FUNCTION corrupt_opening_batch();
+  `);
+  try {
+    assert.equal(runInApp(`
+      await assert.rejects(
+        createOpeningStock(pool, admin, ${JSON.stringify(opening({
+          idempotencyKey: 'opening-reconcile-rollback', code: 'OPEN-R',
+        }))}),
+        (error) => error.status === 409 && error.errorCode === 'INVENTORY_RECONCILIATION_FAILED',
+      );
+      const state = await pool.query(\`
+        SELECT
+          (SELECT count(*)::int FROM stock_transactions WHERE product_id = $1) AS ledgers,
+          (SELECT count(*)::int FROM stock_batches WHERE product_id = $1) AS batches,
+          (SELECT count(*)::int FROM stock_balances WHERE product_id = $1) AS balances,
+          (SELECT count(*)::int FROM audit_logs
+             WHERE action = 'OPENING_STOCK' AND details->>'productId' = $1::text) AS audits
+      \`, [ids.productRollback]);
+      assert.deepEqual(state.rows[0], { ledgers: 0, batches: 0, balances: 0, audits: 0 });
+      console.log('PASS');
+    `), 'PASS');
+  } finally {
+    sql('DROP TRIGGER corrupt_opening_batch ON stock_batches; DROP FUNCTION corrupt_opening_batch()');
   }
 });
 

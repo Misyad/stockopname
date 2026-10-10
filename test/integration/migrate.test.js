@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer as createTcpServer } from 'node:net';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +18,8 @@ function output(command, args, options = {}) {
   });
 }
 
-function compose(args, env) {
-  return output('docker', ['compose', '-f', composeFile, ...args], { env });
+function compose(args, env, options = {}) {
+  return output('docker', ['compose', '-f', composeFile, ...args], { env, ...options });
 }
 
 function sql(statement, env) {
@@ -27,6 +27,16 @@ function sql(statement, env) {
     'exec', '-T', 'database', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-At',
     '-U', env.POSTGRES_USER, '-d', env.POSTGRES_DB, '-c', statement,
   ], env).trim();
+}
+
+function applyMigration(fileName, env) {
+  return compose([
+    'exec', '-T', 'database', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
+    '-U', env.POSTGRES_USER, '-d', env.POSTGRES_DB,
+  ], env, {
+    input: `BEGIN;\n${readFileSync(`${projectRoot}/db/migrations/${fileName}`, 'utf8')}\nCOMMIT;`,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
 }
 
 async function reservePort() {
@@ -78,7 +88,7 @@ test('DB-002 clean database migrates once and rerun changes nothing', { timeout:
     env = await fixture();
 
     const firstRun = compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js'], env);
-    assert.match(firstRun, /Applied 3 migrations/);
+    assert.match(firstRun, /Applied 4 migrations/);
 
     const firstState = sql(
       "SELECT version || '|' || name || '|' || checksum || '|' || applied_at FROM schema_migrations ORDER BY version",
@@ -86,7 +96,7 @@ test('DB-002 clean database migrates once and rerun changes nothing', { timeout:
     );
     assert.match(
       firstState,
-      /^1\|001_schema_migrations\.sql\|[0-9a-f]{64}\|.+\n2\|002_initial_schema\.sql\|[0-9a-f]{64}\|.+\n3\|003_regions_and_transaction_idempotency\.sql\|[0-9a-f]{64}\|.+$/,
+      /^1\|001_schema_migrations\.sql\|[0-9a-f]{64}\|.+\n2\|002_initial_schema\.sql\|[0-9a-f]{64}\|.+\n3\|003_regions_and_transaction_idempotency\.sql\|[0-9a-f]{64}\|.+\n4\|004_stock_transaction_order\.sql\|[0-9a-f]{64}\|.+$/,
     );
 
     const secondRun = compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js'], env);
@@ -115,6 +125,76 @@ test('changed applied migration checksum is rejected', { timeout: 240_000 }, asy
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Migration checksum mismatch: 001_schema_migrations\.sql/);
+  } finally {
+    cleanup(env);
+  }
+});
+
+test('ledger order migration rejects invalid history and follows the balance chain', { timeout: 240_000 }, async () => {
+  let env;
+  try {
+    env = await fixture();
+    for (const fileName of [
+      '001_schema_migrations.sql',
+      '002_initial_schema.sql',
+      '003_regions_and_transaction_idempotency.sql',
+    ]) applyMigration(fileName, env);
+    sql(`
+      INSERT INTO users (id, name, email, password_hash, role, status)
+        VALUES ('00000000-0000-0000-0000-000000000001', 'Admin', 'migration@example.test', 'hash', 'ADMIN', 'ACTIVE');
+      INSERT INTO categories (id, code, name, status)
+        VALUES ('00000000-0000-0000-0000-000000000010', 'MIG', 'Migration', 'ACTIVE');
+      INSERT INTO units (id, code, name, symbol, conversion_to_base, status)
+        VALUES ('00000000-0000-0000-0000-000000000020', 'KG', 'Kilogram', 'kg', 1, 'ACTIVE');
+      INSERT INTO products (id, code, name, category_id, base_unit_id, conversion_factor, status)
+        VALUES ('00000000-0000-0000-0000-000000000030', 'MIG-P', 'Migration Product', '00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000020', 1, 'ACTIVE');
+      INSERT INTO warehouses (id, code, name, status)
+        VALUES ('00000000-0000-0000-0000-000000000040', 'MIG-W', 'Migration Warehouse', 'ACTIVE');
+      INSERT INTO stock_transactions (
+        id, idempotency_key, transaction_number, transaction_type, reference_id,
+        product_id, warehouse_id, quantity, unit, balance_before, balance_after, user_id, created_at
+      ) VALUES (
+        gen_random_uuid(), 'invalid-chain', 'INVALID', 'IN', 'INVALID',
+        '00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000040',
+        1, 'KG', 5, 6, '00000000-0000-0000-0000-000000000001', now()
+      )
+    `, env);
+    const invalid = spawnSync(
+      'docker',
+      ['compose', '-f', composeFile, 'exec', '-T', 'database', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
+       '-U', env.POSTGRES_USER, '-d', env.POSTGRES_DB],
+      {
+        cwd: projectRoot,
+        env,
+        encoding: 'utf8',
+        input: `BEGIN;\n${readFileSync(`${projectRoot}/db/migrations/004_stock_transaction_order.sql`, 'utf8')}\nCOMMIT;`,
+      },
+    );
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /Cannot establish stock ledger order/);
+    assert.equal(sql("SELECT to_regclass('stock_transactions_ledger_sequence_seq') IS NULL", env), 't');
+
+    sql(`
+      DELETE FROM stock_transactions;
+      INSERT INTO stock_transactions (
+        id, idempotency_key, transaction_number, transaction_type, reference_id,
+        product_id, warehouse_id, quantity, unit, balance_before, balance_after, user_id, created_at
+      ) VALUES
+        ('00000000-0000-0000-0000-000000000103', 'chain-3', 'CHAIN-3', 'IN', 'CHAIN',
+         '00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000040',
+         5, 'KG', 10, 15, '00000000-0000-0000-0000-000000000001', '2026-01-01'),
+        ('00000000-0000-0000-0000-000000000102', 'chain-2', 'CHAIN-2', 'IN', 'CHAIN',
+         '00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000040',
+         5, 'KG', 5, 10, '00000000-0000-0000-0000-000000000001', '2026-01-02'),
+        ('00000000-0000-0000-0000-000000000101', 'chain-1', 'CHAIN-1', 'OPENING', 'CHAIN',
+         '00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000040',
+         5, 'KG', 0, 5, '00000000-0000-0000-0000-000000000001', '2026-01-03')
+    `, env);
+    applyMigration('004_stock_transaction_order.sql', env);
+    assert.equal(
+      sql("SELECT string_agg(transaction_number, ',' ORDER BY ledger_sequence) FROM stock_transactions", env),
+      'CHAIN-1,CHAIN-2,CHAIN-3',
+    );
   } finally {
     cleanup(env);
   }
