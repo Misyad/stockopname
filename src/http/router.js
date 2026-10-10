@@ -1,6 +1,7 @@
 import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
+import { createOpeningStock } from '../services/transactions.js';
 
 const routes = Object.freeze({
   categories: 'category',
@@ -16,6 +17,34 @@ function matchMasterPath(path) {
   const match = path.match(/^\/api\/([a-z-]+)(?:\/([0-9a-f-]+)(?:\/(status))?)?$/i);
   if (!match || !Object.hasOwn(routes, match[1])) return null;
   return { kind: routes[match[1]], id: match[2] || null, action: match[3] || null };
+}
+
+export async function handleOpeningRoute({
+  request, response, pool, appOrigin, json, failure, readJson,
+}) {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  if (path !== '/api/transactions/opening' || request.method !== 'POST') return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  if (!validOrigin(request, appOrigin)) {
+    failure(response, 403, 'ORIGIN_INVALID', 'Origin is not allowed.');
+    return true;
+  }
+  const secret = sessionSecret(request);
+  if (!await validCsrf(pool, secret, request.headers['x-csrf-token'])) {
+    failure(response, 403, 'CSRF_INVALID', 'CSRF token is invalid.');
+    return true;
+  }
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+    failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
+    return true;
+  }
+  const data = await createOpeningStock(pool, actor, await readJson(request));
+  json(response, 201, { success: true, data, message: 'OK' });
+  return true;
 }
 
 export async function handleMasterRoute({
