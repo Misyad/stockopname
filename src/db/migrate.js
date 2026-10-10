@@ -24,7 +24,10 @@ async function loadMigrations() {
     if (versions.has(version)) throw new Error(`Duplicate migration version: ${version}`);
     versions.add(version);
     const sql = await readFile(resolve(migrationsDirectory, name), 'utf8');
-    if (/\b(?:DROP|TRUNCATE)\b/i.test(sql.replace(/--.*$/gm, ''))) {
+    const inspectedSql = sql
+      .replace(/--.*$/gm, '')
+      .replace(/\bBEFORE\s+TRUNCATE\s+ON\b/gi, '');
+    if (/\b(?:DROP|TRUNCATE)\b/i.test(inspectedSql)) {
       throw new Error(`Destructive statement rejected in migration: ${name}`);
     }
     return {

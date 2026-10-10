@@ -239,6 +239,31 @@ test('DB-006 database rejects duplicate product and warehouse balance', () => {
   assertSqlRejected(`INSERT INTO stock_balances (id, product_id, warehouse_id, quantity) VALUES (gen_random_uuid(), '${ids.product}', '${ids.warehouse}', 0), (gen_random_uuid(), '${ids.product}', '${ids.warehouse}', 1)`, /stock_balances_product_id_warehouse_id_key/);
 });
 
+test('DB-013 stock ledger is immutable after insert', () => {
+  sql(`
+    INSERT INTO stock_transactions (
+      id, idempotency_key, transaction_number, transaction_type, reference_id,
+      product_id, warehouse_id, quantity, unit, balance_before, balance_after,
+      user_id, created_at
+    ) VALUES (
+      gen_random_uuid(), 'immutable-key', 'IMMUTABLE-1', 'IN', 'IMMUTABLE',
+      '${ids.product}', '${ids.warehouse}', 1, 'KG', 0, 1, '${ids.user}', now()
+    )
+  `, env);
+  assertSqlRejected(
+    "UPDATE stock_transactions SET reference_id = 'CHANGED' WHERE idempotency_key = 'immutable-key'",
+    /stock_transactions is immutable/,
+  );
+  assertSqlRejected(
+    "DELETE FROM stock_transactions WHERE idempotency_key = 'immutable-key'",
+    /stock_transactions is immutable/,
+  );
+  assertSqlRejected(
+    'TRUNCATE stock_transactions',
+    /stock_transactions is immutable/,
+  );
+});
+
 test('DB-007 database rejects duplicate named batch', () => {
   assertSqlRejected(`INSERT INTO stock_batches (id, product_id, warehouse_id, batch_number, quantity, unit) VALUES (gen_random_uuid(), '${ids.product}', '${ids.warehouse}', 'B1', 0, 'KG'), (gen_random_uuid(), '${ids.product}', '${ids.warehouse}', 'B1', 1, 'KG')`, /stock_batches_named_unique/);
 });
@@ -332,7 +357,9 @@ test('DB-011 auth sessions store only secret hashes', () => {
 test('DB-012 forward migrations contain no automatic drop, truncate, or reset', () => {
   const migrationsDirectory = `${projectRoot}/db/migrations`;
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith('.sql'))) {
-    const sqlText = readFileSync(`${migrationsDirectory}/${fileName}`, 'utf8').replace(/--.*$/gm, '');
+    const sqlText = readFileSync(`${migrationsDirectory}/${fileName}`, 'utf8')
+      .replace(/--.*$/gm, '')
+      .replace(/\bBEFORE\s+TRUNCATE\s+ON\b/gi, '');
     assert.doesNotMatch(sqlText, /\b(?:DROP|TRUNCATE|RESET)\b/i, fileName);
   }
 });
