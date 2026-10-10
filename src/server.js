@@ -6,7 +6,7 @@ import { pool } from './db/pool.js';
 import { authenticate, sessionSecret } from './http/middleware/auth.js';
 import { csrfTokenForSession, validCsrf, validOrigin } from './http/middleware/csrf.js';
 import { createLoginLimiter } from './http/middleware/rate-limit.js';
-import { handleMasterRoute, handleOpeningRoute } from './http/router.js';
+import { handleMasterRoute, handleTransactionRoute } from './http/router.js';
 import { revokeSession } from './repositories/sessions.js';
 import { login } from './services/auth.js';
 
@@ -201,7 +201,7 @@ async function route(request, response) {
     return;
   }
 
-  if (await handleOpeningRoute({
+  if (await handleTransactionRoute({
     request, response, pool, appOrigin, json, failure, readJson,
   })) return;
 

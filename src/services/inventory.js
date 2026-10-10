@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import {
+  findStockBalanceForUpdate,
+  findStockBatchForUpdate,
   findTransactionByIdempotency,
+  incrementStockBalance,
+  incrementStockBatch,
   insertInventoryAudit,
   insertStockBalance,
   insertStockBatch,
@@ -33,6 +37,7 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
       await client.query('COMMIT');
       return prior;
     }
+    mutation.validateCurrentState?.();
 
     await lockStock(client, mutation.productId, mutation.warehouseId);
     const before = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
@@ -49,11 +54,53 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
       );
     }
 
-    const batchId = mutation.batch.id ?? randomUUID();
+    let batchId = mutation.batch.id ?? randomUUID();
     const balanceId = mutation.balance.id ?? randomUUID();
     const transactionId = mutation.transaction.id ?? randomUUID();
-    await insertStockBatch(client, { ...mutation.batch, id: batchId });
-    await insertStockBalance(client, { ...mutation.balance, id: balanceId });
+    let balanceBefore = mutation.transaction.balanceBefore;
+    let balanceAfter = mutation.transaction.balanceAfter;
+    if (mutation.mode === 'INCREMENT') {
+      const [batch, balance, quantities] = await Promise.all([
+        findStockBatchForUpdate(
+          client,
+          mutation.productId,
+          mutation.warehouseId,
+          mutation.batch.batchNumber,
+        ),
+        findStockBalanceForUpdate(client, mutation.productId, mutation.warehouseId),
+        client.query(
+          'SELECT trim_scale($1::numeric)::text AS before, trim_scale($1::numeric + $2::numeric)::text AS after',
+          [before.balanceQuantity, mutation.batch.quantity],
+        ),
+      ]);
+      if (batch) {
+        if (batch.production_date_text !== mutation.batch.productionDate
+            || batch.expiry_date_text !== mutation.batch.expiryDate
+            || batch.unit !== mutation.batch.unit) {
+          throw fault(
+            409,
+            'BATCH_METADATA_CONFLICT',
+            'Existing batch metadata does not match the receipt.',
+          );
+        }
+        batchId = batch.id;
+        await incrementStockBatch(
+          client,
+          batch.id,
+          mutation.batch.quantity,
+          mutation.batch.purchasePrice,
+        );
+      } else {
+        await insertStockBatch(client, { ...mutation.batch, id: batchId });
+      }
+      if (balance) await incrementStockBalance(client, balance.id, mutation.balance.quantity);
+      else await insertStockBalance(client, { ...mutation.balance, id: balanceId });
+      balanceBefore = quantities.rows[0].before;
+      balanceAfter = quantities.rows[0].after;
+    } else {
+      await insertStockBatch(client, { ...mutation.batch, id: batchId });
+      await insertStockBalance(client, { ...mutation.balance, id: balanceId });
+    }
     const transaction = await insertStockTransaction(client, {
       ...mutation.transaction,
       id: transactionId,
@@ -62,6 +109,8 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
       productId: mutation.productId,
       warehouseId: mutation.warehouseId,
       batchId,
+      balanceBefore,
+      balanceAfter,
     });
     await insertInventoryAudit(client, {
       id: randomUUID(),

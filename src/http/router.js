@@ -1,7 +1,12 @@
 import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
-import { createOpeningStock } from '../services/transactions.js';
+import { createOpeningStock, createStockIn } from '../services/transactions.js';
+
+const transactionRoutes = Object.freeze({
+  '/api/transactions/opening': createOpeningStock,
+  '/api/transactions/in': createStockIn,
+});
 
 const routes = Object.freeze({
   categories: 'category',
@@ -19,11 +24,12 @@ function matchMasterPath(path) {
   return { kind: routes[match[1]], id: match[2] || null, action: match[3] || null };
 }
 
-export async function handleOpeningRoute({
+export async function handleTransactionRoute({
   request, response, pool, appOrigin, json, failure, readJson,
 }) {
   const path = new URL(request.url, 'http://localhost').pathname;
-  if (path !== '/api/transactions/opening' || request.method !== 'POST') return false;
+  const createTransaction = transactionRoutes[path];
+  if (!createTransaction || request.method !== 'POST') return false;
   const actor = await authenticate(pool, request);
   if (!actor) {
     failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
@@ -42,7 +48,7 @@ export async function handleOpeningRoute({
     failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
     return true;
   }
-  const data = await createOpeningStock(pool, actor, await readJson(request));
+  const data = await createTransaction(pool, actor, await readJson(request));
   json(response, 201, { success: true, data, message: 'OK' });
   return true;
 }

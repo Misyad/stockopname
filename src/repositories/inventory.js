@@ -7,7 +7,7 @@ export async function lockIdempotency(client, key) {
 
 export async function findTransactionByIdempotency(client, key) {
   const result = await client.query(
-    'SELECT * FROM stock_transactions WHERE idempotency_key = $1',
+    "SELECT stock_transactions.*, to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date_text FROM stock_transactions WHERE idempotency_key = $1",
     [key],
   );
   return result.rows[0] || null;
@@ -38,7 +38,7 @@ export async function insertStockTransaction(client, transaction) {
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
       $12, $13, $14, $15, $16, $17, now()
     )
-    RETURNING *
+    RETURNING *, to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date_text
   `, [
     transaction.id, transaction.idempotencyKey, transaction.transactionNumber,
     transaction.transactionType, transaction.transactionDate, transaction.requestHash,
@@ -67,6 +67,52 @@ export async function insertStockBalance(client, balance) {
     INSERT INTO stock_balances (id, product_id, warehouse_id, quantity, version, updated_at)
     VALUES ($1, $2, $3, $4, 1, now())
   `, [balance.id, balance.productId, balance.warehouseId, balance.quantity]);
+}
+
+export async function findStockBatchForUpdate(client, productId, warehouseId, batchNumber) {
+  const result = await client.query(`
+    SELECT stock_batches.*,
+      to_char(production_date, 'YYYY-MM-DD') AS production_date_text,
+      to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date_text
+    FROM stock_batches
+    WHERE product_id = $1 AND warehouse_id = $2
+      AND batch_number IS NOT DISTINCT FROM $3
+    FOR UPDATE
+  `, [productId, warehouseId, batchNumber]);
+  return result.rows[0] || null;
+}
+
+export async function findStockBalanceForUpdate(client, productId, warehouseId) {
+  const result = await client.query(`
+    SELECT * FROM stock_balances
+    WHERE product_id = $1 AND warehouse_id = $2
+    FOR UPDATE
+  `, [productId, warehouseId]);
+  return result.rows[0] || null;
+}
+
+export async function incrementStockBatch(client, id, quantity, purchasePrice) {
+  const result = await client.query(`
+    UPDATE stock_batches
+    SET purchase_price = (quantity * purchase_price + $2::numeric * $3::numeric)
+          / (quantity + $2::numeric),
+        quantity = quantity + $2::numeric,
+        status = 'ACTIVE',
+        updated_at = now()
+    WHERE id = $1
+    RETURNING *
+  `, [id, quantity, purchasePrice]);
+  return result.rows[0];
+}
+
+export async function incrementStockBalance(client, id, quantity) {
+  const result = await client.query(`
+    UPDATE stock_balances
+    SET quantity = quantity + $2::numeric, version = version + 1, updated_at = now()
+    WHERE id = $1
+    RETURNING *
+  `, [id, quantity]);
+  return result.rows[0];
 }
 
 export async function insertInventoryAudit(client, audit) {
