@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Unit, security, lint, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit and UI tests
+        run: pnpm test
+
+      - name: Security tests
+        run: pnpm test:security
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Validate Compose configuration
+        env:
+          POSTGRES_DB: stock_opname_ci
+          POSTGRES_USER: stock_opname_ci
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        run: docker compose config --quiet
+
+  integration:
+    name: Docker integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run integration suite
+        run: pnpm test:integration
+
+      - name: Clean Docker fixtures
+        if: always()
+        run: |
+          docker ps -aq --filter 'label=com.docker.compose.project' | xargs -r docker rm -f
+          docker volume ls -q --filter 'label=com.docker.compose.project' | xargs -r docker volume rm -f
