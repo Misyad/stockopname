@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { authorize, CAPABILITIES } from '../http/middleware/rbac.js';
-import { runInventoryMutation } from './inventory.js';
+import { runInventoryMutation, runStockOutMutation } from './inventory.js';
 
 const openingFields = new Set([
   'idempotencyKey', 'date', 'reference', 'warehouse', 'code', 'batch',
   'production_date', 'expiry', 'quantity', 'unit', 'price', 'notes',
 ]);
 const stockInFields = new Set([...openingFields, 'supplier']);
+const stockOutFields = new Set([
+  'idempotencyKey', 'date', 'reference', 'warehouse', 'code', 'quantity', 'unit', 'notes',
+]);
 const requiredFields = ['idempotencyKey', 'date', 'reference', 'warehouse', 'code', 'quantity', 'unit'];
 
 function fault(status, errorCode, message, details = {}) {
@@ -50,14 +53,16 @@ function numeric(value, field, { positive = false } = {}) {
 }
 
 function normalize(input, type = 'OPENING') {
+  const label = type === 'IN' ? 'Stock In' : type === 'OUT' ? 'Stock Out' : 'Opening stock';
   if (!input || Array.isArray(input) || typeof input !== 'object') {
-    throw fault(400, 'VALIDATION_ERROR', `${type === 'IN' ? 'Stock In' : 'Opening stock'} payload must be an object.`);
+    throw fault(400, 'VALIDATION_ERROR', `${label} payload must be an object.`);
   }
-  const allowedFields = type === 'IN' ? stockInFields : openingFields;
+  const allowedFields = type === 'IN' ? stockInFields
+    : type === 'OUT' ? stockOutFields : openingFields;
   const unknown = Object.keys(input).filter((field) => !allowedFields.has(field));
-  if (unknown.length) throw fault(400, 'VALIDATION_ERROR', 'Unknown opening stock field.', { fields: unknown });
+  if (unknown.length) throw fault(400, 'VALIDATION_ERROR', `Unknown ${label} field.`, { fields: unknown });
   const missing = requiredFields.filter((field) => input[field] === undefined || input[field] === null || input[field] === '');
-  if (missing.length) throw fault(400, 'VALIDATION_ERROR', 'Required opening stock field is missing.', { fields: missing });
+  if (missing.length) throw fault(400, 'VALIDATION_ERROR', `Required ${label} field is missing.`, { fields: missing });
   const productionDate = date(input.production_date, 'production_date');
   const expiry = date(input.expiry, 'expiry');
   if (productionDate && expiry && productionDate > expiry) {
@@ -136,6 +141,27 @@ function response(row) {
     balanceBefore: row.balance_before,
     balanceAfter: row.balance_after,
     date: row.transaction_date_text,
+  };
+}
+
+function stockOutResponse(row) {
+  return {
+    id: row.id,
+    transactionNumber: row.transaction_number,
+    transactionType: 'OUT',
+    reference: row.reference_id,
+    productId: row.product_id,
+    warehouseId: row.warehouse_id,
+    quantity: row.quantity,
+    unit: row.unit,
+    balanceBefore: row.balance_before,
+    balanceAfter: row.balance_after,
+    date: row.transaction_date_text,
+    allocations: row.allocations.map((allocation) => ({
+      transactionId: allocation.transaction_id,
+      batchId: allocation.batch_id,
+      quantity: allocation.quantity,
+    })),
   };
 }
 
@@ -296,4 +322,66 @@ export async function createStockIn(pool, sessionActor, rawInput) {
     };
   });
   return response(transaction);
+}
+
+export async function createStockOut(pool, sessionActor, rawInput) {
+  const input = normalize(rawInput, 'OUT');
+  const request = await runStockOutMutation(pool, input.idempotencyKey, async (client) => {
+    const actorResult = await client.query(
+      "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE' FOR SHARE",
+      [sessionActor?.userId],
+    );
+    const actor = actorResult.rows[0];
+    if (!actor) throw fault(401, 'UNAUTHENTICATED', 'Authentication required.');
+    authorize({ userId: actor.id, role: actor.role }, CAPABILITIES.STOCK_MOVE);
+
+    const product = await activeReference(client, 'products', input.code, 'INVALID_PRODUCT', true);
+    const warehouse = await activeReference(
+      client, 'warehouses', input.warehouse, 'INVALID_WAREHOUSE', true,
+    );
+    if (actor.region_id !== warehouse.region_id) {
+      throw fault(403, 'REGION_FORBIDDEN', 'Warehouse is outside the user region.');
+    }
+    const unit = await resolveUnit(client, input.unit, true);
+    let factor;
+    if (unit.id === product.base_unit_id) factor = '1';
+    else if (unit.id === product.purchase_unit_id) factor = product.conversion_factor;
+    else throw fault(422, 'INVALID_UNIT', 'Unit is not valid for this product.');
+    const converted = await client.query(
+      'SELECT trim_scale($1::numeric * $2::numeric)::text AS quantity',
+      [input.quantity, factor],
+    );
+    const quantity = converted.rows[0].quantity;
+    const canonical = JSON.stringify({
+      type: 'OUT', date: input.date, reference: input.reference,
+      warehouseId: warehouse.id, productId: product.id, quantity,
+      unitId: product.base_unit_id, notes: input.notes,
+    });
+    const requestHash = createHash('sha256').update(canonical).digest('hex');
+    return {
+      requestHash,
+      productId: product.id,
+      warehouseId: warehouse.id,
+      transactionDate: input.date,
+      referenceId: input.reference,
+      quantity,
+      unit: product.base_unit_code,
+      reason: input.notes,
+      userId: actor.id,
+      validateCurrentState: () => {
+        if (product.status !== 'ACTIVE' || product.category_status !== 'ACTIVE'
+            || product.base_unit_status !== 'ACTIVE'
+            || (product.purchase_unit_id && product.purchase_unit_status !== 'ACTIVE')) {
+          throw fault(422, 'INVALID_PRODUCT', 'product is not active or does not exist.');
+        }
+        if (warehouse.status !== 'ACTIVE') {
+          throw fault(422, 'INVALID_WAREHOUSE', 'warehouse is not active or does not exist.');
+        }
+        if (unit.status !== 'ACTIVE' || (unit.alias_status && unit.alias_status !== 'ACTIVE')) {
+          throw fault(422, 'INVALID_UNIT', 'Unit is not active or does not exist.');
+        }
+      },
+    };
+  });
+  return stockOutResponse(request);
 }

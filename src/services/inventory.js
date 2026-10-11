@@ -1,16 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import {
+  decrementStockBalance,
+  decrementStockBatch,
+  findFefoBatchesForUpdate,
   findStockBalanceForUpdate,
   findStockBatchForUpdate,
+  findStockOutByIdempotency,
   findTransactionByIdempotency,
   incrementStockBalance,
   incrementStockBatch,
   insertInventoryAudit,
   insertStockBalance,
   insertStockBatch,
+  insertStockOutRequest,
   insertStockTransaction,
   lockIdempotency,
   lockStock,
+  planFefoAllocations,
   readInventoryReconciliation,
 } from '../repositories/inventory.js';
 
@@ -22,19 +28,143 @@ export async function inventoryReconciliation(client, productId, warehouseId) {
   return readInventoryReconciliation(client, productId, warehouseId);
 }
 
-export async function runInventoryMutation(pool, idempotencyKey, prepare) {
+function assertReconciled(state, message) {
+  if ((state.ledgerCount > 0 || state.batchCount > 0 || state.balanceCount > 0)
+      && !state.reconciled) {
+    throw fault(409, 'INVENTORY_RECONCILIATION_FAILED', message, state);
+  }
+}
+
+async function runTransaction(pool, idempotencyKey, mutate) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await lockIdempotency(client, idempotencyKey);
+    const result = await mutate(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function runStockOutMutation(pool, idempotencyKey, prepare) {
+  return runTransaction(pool, idempotencyKey, async (client) => {
     const mutation = await prepare(client);
-    const prior = await findTransactionByIdempotency(client, idempotencyKey);
-    if (prior) {
-      if (prior.user_id !== mutation.transaction.userId
+    const [prior, otherType] = await Promise.all([
+      findStockOutByIdempotency(client, idempotencyKey),
+      findTransactionByIdempotency(client, idempotencyKey),
+    ]);
+    if (prior || otherType) {
+      if (!prior || prior.user_id !== mutation.userId || prior.request_hash !== mutation.requestHash) {
+        throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different payload.');
+      }
+      return prior;
+    }
+    mutation.validateCurrentState?.();
+    await lockStock(client, mutation.productId, mutation.warehouseId);
+    const before = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
+    assertReconciled(before, 'Inventory state failed reconciliation before mutation.');
+
+    const [balance, batches] = await Promise.all([
+      findStockBalanceForUpdate(client, mutation.productId, mutation.warehouseId),
+      findFefoBatchesForUpdate(
+        client, mutation.productId, mutation.warehouseId, mutation.transactionDate,
+      ),
+    ]);
+    const allocations = await planFefoAllocations(
+      client, batches.map(({ id }) => id), mutation.quantity, before.balanceQuantity,
+    );
+    if (!balance || allocations.at(-1)?.allocated_total !== mutation.quantity) {
+      throw fault(409, 'INSUFFICIENT_STOCK', 'Eligible stock is insufficient.');
+    }
+
+    const requestId = randomUUID();
+    const transactionNumber = `OUT-${requestId}`;
+    const request = await insertStockOutRequest(client, {
+      ...mutation,
+      id: requestId,
+      idempotencyKey,
+      transactionNumber,
+    });
+    if (!await decrementStockBalance(client, balance.id, mutation.quantity)) {
+      throw fault(409, 'INSUFFICIENT_STOCK', 'Eligible stock is insufficient.');
+    }
+    const ledgerRows = [];
+    for (const [index, allocation] of allocations.entries()) {
+      if (!await decrementStockBatch(client, allocation.batch_id, allocation.quantity)) {
+        throw fault(409, 'INSUFFICIENT_STOCK', 'Eligible stock is insufficient.');
+      }
+      const transactionId = randomUUID();
+      ledgerRows.push(await insertStockTransaction(client, {
+        id: transactionId,
+        idempotencyKey: `${requestId}:${index + 1}`,
+        requestHash: mutation.requestHash,
+        transactionNumber: `${transactionNumber}-${index + 1}`,
+        transactionType: 'OUT',
+        transactionDate: mutation.transactionDate,
+        referenceId: mutation.referenceId,
+        productId: mutation.productId,
+        warehouseId: mutation.warehouseId,
+        batchId: allocation.batch_id,
+        quantity: `-${allocation.quantity}`,
+        unit: mutation.unit,
+        balanceBefore: allocation.balance_before,
+        balanceAfter: allocation.balance_after,
+        reason: mutation.reason,
+        userId: mutation.userId,
+        stockOutRequestId: requestId,
+        allocationIndex: index + 1,
+        unitPrice: allocation.unit_price,
+      }));
+    }
+    await insertInventoryAudit(client, {
+      id: randomUUID(),
+      userId: mutation.userId,
+      action: 'STOCK_OUT',
+      reference: requestId,
+      details: {
+        productId: mutation.productId,
+        warehouseId: mutation.warehouseId,
+        quantity: mutation.quantity,
+        allocations: allocations.map((allocation) => ({
+          batchId: allocation.batch_id,
+          quantity: allocation.quantity,
+          unitPrice: allocation.unit_price,
+        })),
+      },
+    });
+    const after = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
+    assertReconciled(after, 'Inventory mutation failed reconciliation.');
+    return {
+      ...request,
+      transaction_type: 'OUT',
+      balance_before: allocations[0].balance_before,
+      balance_after: allocations.at(-1).balance_after,
+      allocations: ledgerRows.map((row, index) => ({
+        transaction_id: row.id,
+        batch_id: row.batch_id,
+        quantity: allocations[index].quantity,
+      })),
+    };
+  });
+}
+
+export async function runInventoryMutation(pool, idempotencyKey, prepare) {
+  return runTransaction(pool, idempotencyKey, async (client) => {
+    const mutation = await prepare(client);
+    const [prior, otherType] = await Promise.all([
+      findTransactionByIdempotency(client, idempotencyKey),
+      findStockOutByIdempotency(client, idempotencyKey),
+    ]);
+    if (prior || otherType) {
+      if (!prior || prior.user_id !== mutation.transaction.userId
           || prior.request_hash !== mutation.requestHash) {
         throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different payload.');
       }
-      await client.query('COMMIT');
       return prior;
     }
     mutation.validateCurrentState?.();
@@ -134,12 +264,6 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
       );
     }
 
-    await client.query('COMMIT');
     return transaction;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

@@ -98,7 +98,8 @@ const schemaContract = {
   stock_batches: 'id:u! product_id:u! warehouse_id:u! batch_number:v production_date:d expiry_date:d quantity:n! unit:v! purchase_price:n!=0 status:v created_at:z updated_at:z',
   stock_opname_items: 'id:u! opname_id:u! product_id:u! batch_id:u system_quantity:n! physical_quantity:n difference:n difference_value:n unit:v! unit_price:n!=0 reason:t notes:t',
   stock_opnames: 'id:u! opname_number:v! warehouse_id:u! opname_date:d! status:v snapshot_at:z! snapshot_version:b! created_by:u! submitted_at:z approved_by:u approved_at:z rejection_reason:t notes:t created_at:z updated_at:z',
-  stock_transactions: "id:u! idempotency_key:v! transaction_number:v! transaction_type:v reference_id:v! product_id:u! warehouse_id:u! batch_id:u supplier_id:u quantity:n! unit:v! balance_before:n! balance_after:n! reason:t user_id:u! created_at:z! transaction_date:d!=CURRENT_DATE request_hash:v!= ledger_sequence:b!=nextval('stock_transactions_ledger_sequence_seq'::regclass)",
+  stock_out_requests: 'id:u! idempotency_key:v! request_hash:v! transaction_number:v! transaction_date:d! reference_id:v! product_id:u! warehouse_id:u! quantity:n! unit:v! user_id:u! created_at:z!',
+  stock_transactions: "id:u! idempotency_key:v! transaction_number:v! transaction_type:v reference_id:v! product_id:u! warehouse_id:u! batch_id:u supplier_id:u quantity:n! unit:v! balance_before:n! balance_after:n! reason:t user_id:u! created_at:z! transaction_date:d!=CURRENT_DATE request_hash:v!= ledger_sequence:b!=nextval('stock_transactions_ledger_sequence_seq'::regclass) stock_out_request_id:u allocation_index:i unit_price:n",
   suppliers: 'id:u! code:v! name:v! phone:v address:t status:v created_at:z updated_at:z',
   unit_aliases: 'id:u! alias:v! unit_id:u! status:v created_at:z updated_at:z',
   units: 'id:u! code:v! name:v! symbol:v! base_unit_id:u conversion_to_base:n! status:v created_at:z updated_at:z',
@@ -125,11 +126,14 @@ const expectedForeignKeys = [
   'staging_ocr_lines.created_by->users.id', 'staging_ocr_lines.import_batch_id->import_batches.id',
   'stock_balances.product_id->products.id', 'stock_balances.warehouse_id->warehouses.id',
   'stock_batches.product_id->products.id', 'stock_batches.warehouse_id->warehouses.id',
+  'stock_out_requests.product_id->products.id', 'stock_out_requests.user_id->users.id',
+  'stock_out_requests.warehouse_id->warehouses.id',
   'stock_opname_items.batch_id->stock_batches.id', 'stock_opname_items.opname_id->stock_opnames.id',
   'stock_opname_items.product_id->products.id', 'stock_opnames.approved_by->users.id',
   'stock_opnames.created_by->users.id', 'stock_opnames.warehouse_id->warehouses.id',
   'stock_transactions.batch_id->stock_batches.id', 'stock_transactions.product_id->products.id',
   'stock_transactions.supplier_id->suppliers.id', 'stock_transactions.user_id->users.id',
+  'stock_transactions.stock_out_request_id->stock_out_requests.id',
   'stock_transactions.warehouse_id->warehouses.id', 'unit_aliases.unit_id->units.id',
   'units.base_unit_id->units.id', 'users.region_id->regions.id',
   'warehouses.region_id->regions.id',
@@ -144,7 +148,8 @@ const expectedChecks = [
   'stock_balances_quantity_check', 'stock_batches_purchase_price_check',
   'stock_batches_quantity_check', 'stock_batches_status_check',
   'stock_opname_items_physical_quantity_check', 'stock_opname_items_system_quantity_check',
-  'stock_opnames_status_check', 'stock_transactions_balance_after_check',
+  'stock_opnames_status_check', 'stock_out_requests_quantity_check',
+  'stock_transactions_balance_after_check', 'stock_transactions_out_allocation_check',
   'stock_transactions_quantity_check', 'stock_transactions_transaction_type_check',
   'suppliers_status_check', 'unit_aliases_status_check', 'units_conversion_to_base_check',
   'units_status_check', 'users_role_check', 'users_status_check', 'warehouses_status_check',
@@ -155,7 +160,8 @@ const expectedUniques = [
   'import_batches_file_hash_import_type_key', 'products_barcode_key', 'products_code_key',
   'ready_import_rows_file_hash_row_number_key', 'regions_code_key',
   'stock_balances_product_id_warehouse_id_key',
-  'stock_opnames_opname_number_key', 'stock_transactions_idempotency_key_key',
+  'stock_opnames_opname_number_key', 'stock_out_requests_idempotency_key_key',
+  'stock_out_requests_transaction_number_key', 'stock_transactions_idempotency_key_key',
   'suppliers_code_key', 'unit_aliases_alias_key', 'units_code_key', 'users_email_key',
   'warehouses_code_key',
 ].sort();
@@ -264,6 +270,27 @@ test('DB-013 stock ledger is immutable after insert', () => {
   );
 });
 
+test('DB-014 stock out request header is immutable', () => {
+  sql(`
+    INSERT INTO stock_out_requests (
+      id, idempotency_key, request_hash, transaction_number, transaction_date,
+      reference_id, product_id, warehouse_id, quantity, unit, user_id, created_at
+    ) VALUES (
+      gen_random_uuid(), 'immutable-out', 'hash', 'OUT-IMMUTABLE', CURRENT_DATE,
+      'ISSUE', '${ids.product}', '${ids.warehouse}', 1, 'KG', '${ids.user}', now()
+    )
+  `, env);
+  assertSqlRejected(
+    "UPDATE stock_out_requests SET reference_id = 'CHANGED' WHERE idempotency_key = 'immutable-out'",
+    /stock_out_requests is immutable/,
+  );
+  assertSqlRejected(
+    "DELETE FROM stock_out_requests WHERE idempotency_key = 'immutable-out'",
+    /stock_out_requests is immutable/,
+  );
+  assertSqlRejected('TRUNCATE stock_out_requests CASCADE', /stock_out_requests is immutable/);
+});
+
 test('DB-007 database rejects duplicate named batch', () => {
   assertSqlRejected(`INSERT INTO stock_batches (id, product_id, warehouse_id, batch_number, quantity, unit) VALUES (gen_random_uuid(), '${ids.product}', '${ids.warehouse}', 'B1', 0, 'KG'), (gen_random_uuid(), '${ids.product}', '${ids.warehouse}', 'B1', 1, 'KG')`, /stock_batches_named_unique/);
 });
@@ -338,6 +365,16 @@ test('DB-001 schema has every required index path', () => {
   for (const requiredPath of requiredIndexPaths) {
     assert.ok(indexPaths.includes(requiredPath), `missing required index path: ${requiredPath}`);
   }
+
+  const stockOutIndexes = sql(`
+    SELECT indexname || '|' || indexdef
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname IN ('stock_batches_fefo_active_idx', 'stock_transactions_out_allocation_unique')
+    ORDER BY indexname
+  `, env);
+  assert.match(stockOutIndexes, /stock_batches_fefo_active_idx\|.*\(product_id, warehouse_id, expiry_date, production_date, created_at, id\).*WHERE .*ACTIVE.*quantity.*0/);
+  assert.match(stockOutIndexes, /stock_transactions_out_allocation_unique\|.*UNIQUE.*\(stock_out_request_id, allocation_index\).*WHERE .*stock_out_request_id IS NOT NULL/);
 });
 
 test('DB-011 auth sessions store only secret hashes', () => {

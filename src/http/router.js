@@ -1,11 +1,12 @@
 import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
-import { createOpeningStock, createStockIn } from '../services/transactions.js';
+import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 
 const transactionRoutes = Object.freeze({
   '/api/transactions/opening': createOpeningStock,
   '/api/transactions/in': createStockIn,
+  '/api/transactions/out': createStockOut,
 });
 
 const routes = Object.freeze({
