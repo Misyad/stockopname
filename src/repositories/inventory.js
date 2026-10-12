@@ -13,6 +13,31 @@ export async function findTransactionByIdempotency(client, key) {
   return result.rows[0] || null;
 }
 
+export async function findStockOutByIdempotency(client, key) {
+  const request = (await client.query(`
+    SELECT stock_out_requests.*,
+      to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date_text
+    FROM stock_out_requests
+    WHERE idempotency_key = $1
+  `, [key])).rows[0];
+  if (!request) return null;
+  const allocations = (await client.query(`
+    SELECT id AS transaction_id, batch_id, trim_scale(-quantity)::text AS quantity,
+      trim_scale(balance_before)::text AS balance_before,
+      trim_scale(balance_after)::text AS balance_after
+    FROM stock_transactions
+    WHERE stock_out_request_id = $1
+    ORDER BY allocation_index
+  `, [request.id])).rows;
+  return {
+    ...request,
+    transaction_type: 'OUT',
+    balance_before: allocations[0]?.balance_before,
+    balance_after: allocations.at(-1)?.balance_after,
+    allocations,
+  };
+}
+
 export async function lockStock(client, productId, warehouseId) {
   await client.query(
     'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
@@ -33,10 +58,11 @@ export async function insertStockTransaction(client, transaction) {
     INSERT INTO stock_transactions (
       id, idempotency_key, transaction_number, transaction_type, transaction_date,
       request_hash, reference_id, product_id, warehouse_id, batch_id, supplier_id,
-      quantity, unit, balance_before, balance_after, reason, user_id, created_at
+      quantity, unit, balance_before, balance_after, reason, user_id, created_at,
+      stock_out_request_id, allocation_index, unit_price
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-      $12, $13, $14, $15, $16, $17, now()
+      $12, $13, $14, $15, $16, $17, now(), $18, $19, $20
     )
     RETURNING *, to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date_text
   `, [
@@ -45,7 +71,23 @@ export async function insertStockTransaction(client, transaction) {
     transaction.referenceId, transaction.productId, transaction.warehouseId,
     transaction.batchId, transaction.supplierId ?? null, transaction.quantity,
     transaction.unit, transaction.balanceBefore, transaction.balanceAfter,
-    transaction.reason ?? null, transaction.userId,
+    transaction.reason ?? null, transaction.userId, transaction.stockOutRequestId ?? null,
+    transaction.allocationIndex ?? null, transaction.unitPrice ?? null,
+  ]);
+  return result.rows[0];
+}
+
+export async function insertStockOutRequest(client, request) {
+  const result = await client.query(`
+    INSERT INTO stock_out_requests (
+      id, idempotency_key, request_hash, transaction_number, transaction_date,
+      reference_id, product_id, warehouse_id, quantity, unit, user_id, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+    RETURNING *, to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date_text
+  `, [
+    request.id, request.idempotencyKey, request.requestHash, request.transactionNumber,
+    request.transactionDate, request.referenceId, request.productId, request.warehouseId,
+    request.quantity, request.unit, request.userId,
   ]);
   return result.rows[0];
 }
@@ -88,6 +130,66 @@ export async function findStockBalanceForUpdate(client, productId, warehouseId) 
     WHERE product_id = $1 AND warehouse_id = $2
     FOR UPDATE
   `, [productId, warehouseId]);
+  return result.rows[0] || null;
+}
+
+export async function findFefoBatchesForUpdate(client, productId, warehouseId, transactionDate) {
+  const result = await client.query(`
+    SELECT * FROM stock_batches
+    WHERE product_id = $1 AND warehouse_id = $2
+      AND status = 'ACTIVE' AND quantity > 0
+      AND (expiry_date IS NULL OR expiry_date >= $3::date)
+    ORDER BY expiry_date ASC NULLS LAST, production_date ASC NULLS LAST, created_at ASC, id ASC
+    FOR UPDATE
+  `, [productId, warehouseId, transactionDate]);
+  return result.rows;
+}
+
+export async function planFefoAllocations(client, batchIds, requestedQuantity, balanceBefore) {
+  if (!batchIds.length) return [];
+  const result = await client.query(`
+    WITH ordered AS (
+      SELECT batches.*, input.ordinality,
+        coalesce(sum(batches.quantity) OVER (
+          ORDER BY input.ordinality ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        ), 0) AS prior_quantity
+      FROM unnest($1::uuid[]) WITH ORDINALITY AS input(id, ordinality)
+      JOIN stock_batches batches ON batches.id = input.id
+    ), planned AS (
+      SELECT *, least(quantity, greatest($2::numeric - prior_quantity, 0)) AS allocation
+      FROM ordered
+    )
+    SELECT id AS batch_id, trim_scale(allocation)::text AS quantity,
+      trim_scale(purchase_price)::text AS unit_price,
+      trim_scale($3::numeric - prior_quantity)::text AS balance_before,
+      trim_scale($3::numeric - prior_quantity - allocation)::text AS balance_after,
+      trim_scale(sum(allocation) OVER ())::text AS allocated_total
+    FROM planned
+    WHERE allocation > 0
+    ORDER BY ordinality
+  `, [batchIds, requestedQuantity, balanceBefore]);
+  return result.rows;
+}
+
+export async function decrementStockBatch(client, id, quantity) {
+  const result = await client.query(`
+    UPDATE stock_batches
+    SET quantity = quantity - $2::numeric,
+        status = CASE WHEN quantity - $2::numeric = 0 THEN 'DEPLETED' ELSE 'ACTIVE' END,
+        updated_at = now()
+    WHERE id = $1 AND status = 'ACTIVE' AND quantity >= $2::numeric
+    RETURNING *
+  `, [id, quantity]);
+  return result.rows[0] || null;
+}
+
+export async function decrementStockBalance(client, id, quantity) {
+  const result = await client.query(`
+    UPDATE stock_balances
+    SET quantity = quantity - $2::numeric, version = version + 1, updated_at = now()
+    WHERE id = $1 AND quantity >= $2::numeric
+    RETURNING *
+  `, [id, quantity]);
   return result.rows[0] || null;
 }
 
