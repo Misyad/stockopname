@@ -1,16 +1,24 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   authorize, CAPABILITIES, projectOpnameItem,
 } from '../http/middleware/rbac.js';
+import { insertStockTransaction, readInventoryReconciliation } from '../repositories/inventory.js';
 import {
+  applyAdjustmentQuantity,
+  approvalSnapshotMatches,
+  approveOpnameRow,
   findOpname,
   findWarehouseForSnapshot,
+  hasPostSnapshotMovement,
   insertOpname,
   insertOpnameAudit,
   insertSnapshotItems,
   listOpnameItems,
+  lockOpnameInventory,
   lockWarehouseBalances,
+  readApprovalItems,
   readSnapshotVersion,
+  rejectOpnameRow,
   resetAndStartOpname,
   submitOpnameRow,
   updateOpnameCounts,
@@ -209,7 +217,7 @@ export async function getOpname(pool, sessionActor, id) {
 
 export async function startOpname(pool, sessionActor, id) {
   return runOpnameMutation(
-    pool, sessionActor, id, CAPABILITIES.OPNAME_COUNT, ['DRAFT'],
+    pool, sessionActor, id, CAPABILITIES.OPNAME_COUNT, ['DRAFT', 'REJECTED'],
     async (client, actor, opname) => {
       const row = await resetAndStartOpname(client, id);
       await insertOpnameAudit(client, {
@@ -295,6 +303,111 @@ export async function submitOpname(pool, sessionActor, id) {
         details: {},
       });
       return { id, status: row.status };
+    },
+  );
+}
+
+function normalizeAction(input, action) {
+  if (!input || Array.isArray(input) || typeof input !== 'object') {
+    throw fault(400, 'VALIDATION_ERROR', `${action} payload must be an object.`);
+  }
+  if (action === 'approval') {
+    if (Object.keys(input).length) throw fault(400, 'VALIDATION_ERROR', 'Approval payload must be empty.');
+    return null;
+  }
+  if (Object.keys(input).some((field) => field !== 'reason')) {
+    throw fault(400, 'VALIDATION_ERROR', 'Unknown rejection field.');
+  }
+  try {
+    return text(input.reason, 'reason', 2000);
+  } catch (error) {
+    if (error.errorCode === 'VALIDATION_ERROR') {
+      throw fault(400, 'REASON_REQUIRED', 'A rejection reason is required.');
+    }
+    throw error;
+  }
+}
+
+export async function rejectOpname(pool, sessionActor, id, rawInput) {
+  const reason = normalizeAction(rawInput, 'rejection');
+  return runOpnameMutation(
+    pool, sessionActor, id, CAPABILITIES.OPNAME_REJECT, ['SUBMITTED'],
+    async (client, actor) => {
+      const row = await rejectOpnameRow(client, id, reason);
+      await insertOpnameAudit(client, {
+        userId: actor.userId, action: 'OPNAME_REJECTED', reference: id, details: { reason },
+      });
+      return { id, status: row.status, rejectionReason: row.rejection_reason };
+    },
+  );
+}
+
+export async function approveOpname(pool, sessionActor, id, rawInput) {
+  normalizeAction(rawInput, 'approval');
+  return runOpnameMutation(
+    pool, sessionActor, id, CAPABILITIES.OPNAME_APPROVE, ['SUBMITTED'],
+    async (client, actor, opname) => {
+      await lockOpnameInventory(client, opname.warehouse_id);
+      if (await hasPostSnapshotMovement(client, opname)) {
+        throw fault(409, 'STOCK_MOVED_DURING_OPNAME', 'Stock moved after the opname snapshot.');
+      }
+      const items = await readApprovalItems(client, id);
+      if (items.some((item) => item.batch_negative || item.balance_negative)) {
+        throw fault(409, 'NEGATIVE_STOCK', 'Adjustment would create negative stock.');
+      }
+      if (!await approvalSnapshotMatches(client, id, opname.warehouse_id)) {
+        throw fault(409, 'STOCK_CHANGED_AFTER_OPNAME', 'Current stock no longer matches the opname snapshot.');
+      }
+      const productIds = [...new Set(items.map((item) => item.product_id))];
+      for (const productId of productIds) {
+        const state = await readInventoryReconciliation(client, productId, opname.warehouse_id);
+        if (!state.reconciled) {
+          throw fault(409, 'STOCK_CHANGED_AFTER_OPNAME', 'Current stock failed reconciliation.');
+        }
+      }
+      let adjustments = 0;
+      for (const item of items) {
+        if (item.difference === '0') continue;
+        const balances = await applyAdjustmentQuantity(client, {
+          ...item, warehouse_id: opname.warehouse_id,
+        });
+        if (!balances) throw fault(409, 'NEGATIVE_STOCK', 'Adjustment would create negative stock.');
+        const requestHash = createHash('sha256').update(JSON.stringify({
+          opnameId: id, itemId: item.id, difference: item.difference,
+        })).digest('hex');
+        const transactionId = randomUUID();
+        await insertStockTransaction(client, {
+          id: transactionId,
+          idempotencyKey: `opname:${id}:${item.id}`,
+          transactionNumber: `ADJ-${transactionId}`,
+          transactionType: 'ADJUSTMENT',
+          transactionDate: opname.opname_date_text,
+          requestHash,
+          referenceId: id,
+          productId: item.product_id,
+          warehouseId: opname.warehouse_id,
+          batchId: item.batch_id,
+          quantity: item.difference,
+          unit: item.unit,
+          balanceBefore: balances.balance_before,
+          balanceAfter: balances.balance_after,
+          reason: item.reason,
+          userId: actor.userId,
+        });
+        adjustments += 1;
+      }
+      for (const productId of productIds) {
+        const state = await readInventoryReconciliation(client, productId, opname.warehouse_id);
+        if (!state.reconciled) {
+          throw fault(409, 'STOCK_CHANGED_AFTER_OPNAME', 'Adjustment failed reconciliation.');
+        }
+      }
+      const row = await approveOpnameRow(client, id, actor.userId);
+      await insertOpnameAudit(client, {
+        userId: actor.userId, action: 'OPNAME_APPROVED', reference: id,
+        details: { adjustments },
+      });
+      return { id, status: row.status, adjustments };
     },
   );
 }

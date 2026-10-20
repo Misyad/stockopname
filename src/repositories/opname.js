@@ -161,3 +161,131 @@ export async function submitOpnameRow(client, id) {
   `, [id]);
   return result.rows[0];
 }
+
+export async function lockOpnameInventory(client, warehouseId) {
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+    [`warehouse-stock:${warehouseId}`],
+  );
+  await client.query(`
+    SELECT id FROM stock_balances WHERE warehouse_id = $1 ORDER BY product_id, id FOR UPDATE
+  `, [warehouseId]);
+  await client.query(`
+    SELECT id FROM stock_batches WHERE warehouse_id = $1 ORDER BY product_id, id FOR UPDATE
+  `, [warehouseId]);
+}
+
+export async function hasPostSnapshotMovement(client, opname) {
+  const result = await client.query(`
+    SELECT EXISTS (
+      SELECT 1 FROM stock_transactions
+      WHERE warehouse_id = $1 AND ledger_sequence > $2
+    ) AS moved
+  `, [opname.warehouse_id, opname.snapshot_version]);
+  return result.rows[0].moved;
+}
+
+export async function readApprovalItems(client, opnameId) {
+  const result = await client.query(`
+    WITH expected AS (
+      SELECT product_id, sum(system_quantity) AS quantity, sum(difference) AS difference
+      FROM stock_opname_items WHERE opname_id = $1 GROUP BY product_id
+    )
+    SELECT items.id, items.product_id, items.batch_id, items.unit, items.reason,
+      trim_scale(items.system_quantity)::text AS system_quantity,
+      trim_scale(items.difference)::text AS difference,
+      trim_scale(items.unit_price)::text AS unit_price,
+      trim_scale(batches.quantity)::text AS batch_quantity,
+      trim_scale(balances.quantity)::text AS balance_quantity,
+      (coalesce(batches.quantity, 0) + items.difference < 0) AS batch_negative,
+      (coalesce(balances.quantity, 0) + expected.difference < 0) AS balance_negative
+    FROM stock_opname_items items
+    JOIN expected ON expected.product_id = items.product_id
+    LEFT JOIN stock_batches batches ON batches.id = items.batch_id
+    LEFT JOIN stock_balances balances
+      ON balances.product_id = items.product_id
+      AND balances.warehouse_id = (SELECT warehouse_id FROM stock_opnames WHERE id = $1)
+    WHERE items.opname_id = $1
+    ORDER BY items.product_id, items.id
+  `, [opnameId]);
+  return result.rows;
+}
+
+export async function approvalSnapshotMatches(client, opnameId, warehouseId) {
+  const result = await client.query(`
+    WITH expected AS (
+      SELECT product_id, sum(system_quantity) AS quantity
+      FROM stock_opname_items WHERE opname_id = $1 GROUP BY product_id
+    ), item_mismatch AS (
+      SELECT 1 FROM stock_opname_items items
+      LEFT JOIN stock_batches batches ON batches.id = items.batch_id
+      WHERE items.opname_id = $1 AND (
+        items.batch_id IS NULL OR batches.id IS NULL
+        OR batches.product_id IS DISTINCT FROM items.product_id
+        OR batches.quantity IS DISTINCT FROM items.system_quantity
+        OR batches.unit IS DISTINCT FROM items.unit
+        OR batches.purchase_price IS DISTINCT FROM items.unit_price
+      ) LIMIT 1
+    ), balance_mismatch AS (
+      SELECT 1 FROM expected
+      LEFT JOIN stock_balances balances
+        ON balances.product_id = expected.product_id AND balances.warehouse_id = $2
+      WHERE balances.quantity IS DISTINCT FROM expected.quantity
+      UNION ALL
+      SELECT 1 FROM stock_balances balances
+      LEFT JOIN expected ON expected.product_id = balances.product_id
+      WHERE balances.warehouse_id = $2 AND balances.quantity > 0 AND expected.product_id IS NULL
+      LIMIT 1
+    ), batch_mismatch AS (
+      SELECT 1 FROM stock_batches batches
+      LEFT JOIN stock_opname_items items
+        ON items.opname_id = $1 AND items.batch_id = batches.id
+      WHERE batches.warehouse_id = $2 AND batches.quantity > 0 AND items.id IS NULL
+      LIMIT 1
+    )
+    SELECT NOT EXISTS (SELECT 1 FROM item_mismatch)
+      AND NOT EXISTS (SELECT 1 FROM balance_mismatch)
+      AND NOT EXISTS (SELECT 1 FROM batch_mismatch) AS matches
+  `, [opnameId, warehouseId]);
+  return result.rows[0].matches;
+}
+
+export async function applyAdjustmentQuantity(client, item) {
+  const batch = await client.query(`
+    UPDATE stock_batches
+    SET quantity = quantity + $2::numeric,
+      status = CASE WHEN quantity + $2::numeric = 0 THEN 'DEPLETED' ELSE 'ACTIVE' END,
+      updated_at = now()
+    WHERE id = $1 AND quantity + $2::numeric >= 0
+    RETURNING id
+  `, [item.batch_id, item.difference]);
+  const balance = await client.query(`
+    WITH updated AS (
+      UPDATE stock_balances SET quantity = quantity + $2::numeric,
+        version = version + 1, updated_at = now()
+      WHERE product_id = $1 AND warehouse_id = $3 AND quantity + $2::numeric >= 0
+      RETURNING quantity
+    )
+    SELECT trim_scale(quantity - $2::numeric)::text AS balance_before,
+      trim_scale(quantity)::text AS balance_after FROM updated
+  `, [item.product_id, item.difference, item.warehouse_id]);
+  if (!batch.rowCount || !balance.rowCount) return null;
+  return balance.rows[0];
+}
+
+export async function rejectOpnameRow(client, id, reason) {
+  const result = await client.query(`
+    UPDATE stock_opnames SET status = 'REJECTED', rejection_reason = $2, updated_at = now()
+    WHERE id = $1 RETURNING status, rejection_reason
+  `, [id, reason]);
+  return result.rows[0];
+}
+
+export async function approveOpnameRow(client, id, userId) {
+  const result = await client.query(`
+    UPDATE stock_opnames SET status = 'APPROVED', approved_by = $2,
+      approved_at = now(), updated_at = now()
+    WHERE id = $1 RETURNING status, approved_by, approved_at
+  `, [id, userId]);
+  return result.rows[0];
+}

@@ -309,12 +309,3 @@ test('warehouse scope rejects cross-region detail and every Phase 6.1 mutation f
   }
   assert.equal(sql(`SELECT status FROM stock_opnames WHERE id = '${opnameId}'`), 'DRAFT');
 });
-
-test('Phase 6.1 start does not activate REJECTED recount from Phase 6.2', async () => {
-  const opname = await createOpname(sessions.petugas, 'Phase boundary');
-  sql(`UPDATE stock_opnames SET status = 'REJECTED' WHERE id = '${opname.id}'`);
-  const result = await api(`/opnames/${opname.id}/start`, mutation(sessions.petugas, {}));
-  assert.equal(result.response.status, 409, JSON.stringify(result.body));
-  assert.equal(result.body.errorCode, 'INVALID_STATUS');
-  assert.equal(sql(`SELECT status FROM stock_opnames WHERE id = '${opname.id}'`), 'REJECTED');
-});
