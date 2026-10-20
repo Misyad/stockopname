@@ -3,6 +3,9 @@ import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
+import {
+  createOpname, getOpname, saveOpnameCounts, startOpname, submitOpname,
+} from '../services/opname.js';
 
 const transactionRoutes = Object.freeze({
   '/api/transactions/opening': createOpeningStock,
@@ -52,6 +55,48 @@ export async function handleTransactionRoute({
   }
   const data = await createTransaction(pool, actor, await readJson(request));
   json(response, 201, { success: true, data, message: 'OK' });
+  return true;
+}
+
+export async function handleOpnameRoute({
+  request, response, pool, appOrigin, json, failure, readJson,
+}) {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  const itemMatch = path.match(/^\/api\/opnames\/([0-9a-f-]+)(?:\/(start|counts|submit))?$/i);
+  const isCreate = request.method === 'POST' && path === '/api/opnames';
+  const isDetail = request.method === 'GET' && itemMatch && !itemMatch[2];
+  const isMutation = request.method === 'POST' && itemMatch && itemMatch[2];
+  if (!isCreate && !isDetail && !isMutation) return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  if (isDetail) {
+    const data = await getOpname(pool, actor, itemMatch[1]);
+    json(response, 200, { success: true, data, message: 'OK' });
+    return true;
+  }
+  if (!validOrigin(request, appOrigin)) {
+    failure(response, 403, 'ORIGIN_INVALID', 'Origin is not allowed.');
+    return true;
+  }
+  const secret = sessionSecret(request);
+  if (!await validCsrf(pool, secret, request.headers['x-csrf-token'])) {
+    failure(response, 403, 'CSRF_INVALID', 'CSRF token is invalid.');
+    return true;
+  }
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+    failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
+    return true;
+  }
+  const body = await readJson(request);
+  let data;
+  if (isCreate) data = await createOpname(pool, actor, body);
+  else if (itemMatch[2] === 'start') data = await startOpname(pool, actor, itemMatch[1]);
+  else if (itemMatch[2] === 'counts') data = await saveOpnameCounts(pool, actor, itemMatch[1], body);
+  else data = await submitOpname(pool, actor, itemMatch[1]);
+  json(response, isCreate ? 201 : 200, { success: true, data, message: 'OK' });
   return true;
 }
 

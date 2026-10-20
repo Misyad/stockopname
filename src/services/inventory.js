@@ -16,6 +16,7 @@ import {
   insertStockTransaction,
   lockIdempotency,
   lockStock,
+  lockWarehouseStock,
   planFefoAllocations,
   readInventoryReconciliation,
 } from '../repositories/inventory.js';
@@ -65,6 +66,7 @@ export async function runStockOutMutation(pool, idempotencyKey, prepare) {
       return prior;
     }
     mutation.validateCurrentState?.();
+    await lockWarehouseStock(client, mutation.warehouseId);
     await lockStock(client, mutation.productId, mutation.warehouseId);
     const before = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
     assertReconciled(before, 'Inventory state failed reconciliation before mutation.');
@@ -169,6 +171,7 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
     }
     mutation.validateCurrentState?.();
 
+    await lockWarehouseStock(client, mutation.warehouseId);
     await lockStock(client, mutation.productId, mutation.warehouseId);
     const before = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
     if (mutation.requireEmptyLedger && before.ledgerCount > 0) {
