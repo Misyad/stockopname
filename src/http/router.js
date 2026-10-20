@@ -4,7 +4,8 @@ import { createMaster, deactivateMaster, listMasters, updateMaster } from '../se
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import {
-  createOpname, getOpname, saveOpnameCounts, startOpname, submitOpname,
+  approveOpname, createOpname, getOpname, rejectOpname,
+  saveOpnameCounts, startOpname, submitOpname,
 } from '../services/opname.js';
 
 const transactionRoutes = Object.freeze({
@@ -62,7 +63,7 @@ export async function handleOpnameRoute({
   request, response, pool, appOrigin, json, failure, readJson,
 }) {
   const path = new URL(request.url, 'http://localhost').pathname;
-  const itemMatch = path.match(/^\/api\/opnames\/([0-9a-f-]+)(?:\/(start|counts|submit))?$/i);
+  const itemMatch = path.match(/^\/api\/opnames\/([0-9a-f-]+)(?:\/(start|counts|submit|approve|reject))?$/i);
   const isCreate = request.method === 'POST' && path === '/api/opnames';
   const isDetail = request.method === 'GET' && itemMatch && !itemMatch[2];
   const isMutation = request.method === 'POST' && itemMatch && itemMatch[2];
@@ -95,7 +96,9 @@ export async function handleOpnameRoute({
   if (isCreate) data = await createOpname(pool, actor, body);
   else if (itemMatch[2] === 'start') data = await startOpname(pool, actor, itemMatch[1]);
   else if (itemMatch[2] === 'counts') data = await saveOpnameCounts(pool, actor, itemMatch[1], body);
-  else data = await submitOpname(pool, actor, itemMatch[1]);
+  else if (itemMatch[2] === 'submit') data = await submitOpname(pool, actor, itemMatch[1]);
+  else if (itemMatch[2] === 'approve') data = await approveOpname(pool, actor, itemMatch[1], body);
+  else data = await rejectOpname(pool, actor, itemMatch[1], body);
   json(response, isCreate ? 201 : 200, { success: true, data, message: 'OK' });
   return true;
 }
