@@ -174,7 +174,9 @@ const requiredIndexPaths = [
   'stock_opname_items(opname_id)', 'stock_opnames(warehouse_id,status)',
   'stock_transactions(created_at)', 'stock_transactions(product_id,warehouse_id,created_at)',
   'stock_transactions(ledger_sequence)', 'stock_transactions(reference_id)',
+  'stock_transactions(product_id,warehouse_id,transaction_date,ledger_sequence)',
   'stock_transactions(warehouse_id,created_at)',
+  'stock_transactions(warehouse_id,transaction_date,ledger_sequence)',
   'users(region_id)', 'warehouses(region_id)',
 ].sort();
 

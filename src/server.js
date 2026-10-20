@@ -6,7 +6,11 @@ import { pool } from './db/pool.js';
 import { authenticate, sessionSecret } from './http/middleware/auth.js';
 import { csrfTokenForSession, validCsrf, validOrigin } from './http/middleware/csrf.js';
 import { createLoginLimiter } from './http/middleware/rate-limit.js';
-import { handleMasterRoute, handleTransactionRoute } from './http/router.js';
+import {
+  handleInventoryReadRoute,
+  handleMasterRoute,
+  handleTransactionRoute,
+} from './http/router.js';
 import { revokeSession } from './repositories/sessions.js';
 import { login } from './services/auth.js';
 
@@ -204,6 +208,8 @@ async function route(request, response) {
   if (await handleTransactionRoute({
     request, response, pool, appOrigin, json, failure, readJson,
   })) return;
+
+  if (await handleInventoryReadRoute({ request, response, pool, json, failure })) return;
 
   if (await handleMasterRoute({
     request, response, pool, appOrigin, json, failure, readJson,

@@ -1,6 +1,7 @@
 import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
+import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 
 const transactionRoutes = Object.freeze({
@@ -51,6 +52,27 @@ export async function handleTransactionRoute({
   }
   const data = await createTransaction(pool, actor, await readJson(request));
   json(response, 201, { success: true, data, message: 'OK' });
+  return true;
+}
+
+export async function handleInventoryReadRoute({ request, response, pool, json, failure }) {
+  if (request.method !== 'GET') return false;
+  const url = new URL(request.url, 'http://localhost');
+  const stockCardMatch = url.pathname.match(/^\/api\/stock-card\/([^/]+)$/);
+  if (url.pathname !== '/api/stock' && url.pathname !== '/api/transactions' && !stockCardMatch) {
+    return false;
+  }
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  const options = Object.fromEntries(url.searchParams);
+  let data;
+  if (url.pathname === '/api/stock') data = await listStock(pool, actor, options);
+  else if (url.pathname === '/api/transactions') data = await listTransactions(pool, actor, options);
+  else data = await stockCard(pool, actor, stockCardMatch[1], options);
+  json(response, 200, { success: true, data, message: 'OK' });
   return true;
 }
 
