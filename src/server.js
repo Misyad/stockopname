@@ -9,6 +9,7 @@ import { createLoginLimiter } from './http/middleware/rate-limit.js';
 import {
   handleInventoryReadRoute,
   handleMasterRoute,
+  handleOpnameRoute,
   handleTransactionRoute,
 } from './http/router.js';
 import { revokeSession } from './repositories/sessions.js';
@@ -22,6 +23,7 @@ const publicFiles = Object.freeze({
   '/login': ['login.html', 'text/html; charset=utf-8'],
   '/login.js': ['login.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/opname.js': ['opname.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 });
 const publicDirectory = fileURLToPath(new URL('./public/', import.meta.url));
@@ -206,6 +208,10 @@ async function route(request, response) {
   }
 
   if (await handleTransactionRoute({
+    request, response, pool, appOrigin, json, failure, readJson,
+  })) return;
+
+  if (await handleOpnameRoute({
     request, response, pool, appOrigin, json, failure, readJson,
   })) return;
 

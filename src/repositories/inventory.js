@@ -45,6 +45,13 @@ export async function lockStock(client, productId, warehouseId) {
   );
 }
 
+export async function lockWarehouseStock(client, warehouseId) {
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+    [`warehouse-stock:${warehouseId}`],
+  );
+}
+
 export async function hasStockLedger(client, productId, warehouseId) {
   const result = await client.query(
     'SELECT 1 FROM stock_transactions WHERE product_id = $1 AND warehouse_id = $2 LIMIT 1',
