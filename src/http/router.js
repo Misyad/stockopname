@@ -3,6 +3,7 @@ import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
+import { previewImport } from '../services/import.js';
 import {
   approveOpname, createOpname, getOpname, rejectOpname,
   saveOpnameCounts, startOpname, submitOpname,
@@ -55,6 +56,43 @@ export async function handleTransactionRoute({
     return true;
   }
   const data = await createTransaction(pool, actor, await readJson(request));
+  json(response, 201, { success: true, data, message: 'OK' });
+  return true;
+}
+
+export async function handleImportRoute({
+  request, response, pool, appOrigin, json, failure, readJson,
+}) {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  if (request.method !== 'POST' || path !== '/api/imports/preview') return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  if (actor.role !== 'ADMIN') {
+    failure(response, 403, 'FORBIDDEN', 'Insufficient permission.');
+    return true;
+  }
+  if (!validOrigin(request, appOrigin)) {
+    failure(response, 403, 'ORIGIN_INVALID', 'Origin is not allowed.');
+    return true;
+  }
+  const secret = sessionSecret(request);
+  if (!await validCsrf(pool, secret, request.headers['x-csrf-token'])) {
+    failure(response, 403, 'CSRF_INVALID', 'CSRF token is invalid.');
+    return true;
+  }
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+    failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
+    return true;
+  }
+  const body = await readJson(request, {
+    maxBytes: 1_100_000,
+    errorCode: 'IMPORT_FILE_TOO_LARGE',
+    sizeMessage: 'CSV exceeds 1 MiB.',
+  });
+  const data = await previewImport(pool, actor, body);
   json(response, 201, { success: true, data, message: 'OK' });
   return true;
 }
