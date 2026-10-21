@@ -37,7 +37,8 @@ h1 { font-size: clamp(1.65rem, 7vw, 2.2rem); margin-bottom: .3rem; }
 .panel, .state, dialog { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgb(23 33 27 / 7%); }
 .panel, .state { padding: 1rem; margin-bottom: 1rem; }
 .filters { display: grid; gap: .8rem; }
-.field { display: grid; gap: .35rem; }
+.field { min-width: 0; display: grid; gap: .35rem; }
+.field > * { min-width: 0; max-width: 100%; }
 .field label { font-size: .875rem; font-weight: 700; }
 .error { border-color: #dfaaaa; }
 .error-text { color: var(--danger); }

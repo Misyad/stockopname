@@ -8,6 +8,7 @@ import { csrfTokenForSession, validCsrf, validOrigin } from './http/middleware/c
 import { createLoginLimiter } from './http/middleware/rate-limit.js';
 import {
   handleInventoryReadRoute,
+  handleImportRoute,
   handleMasterRoute,
   handleOpnameRoute,
   handleTransactionRoute,
@@ -23,6 +24,7 @@ const publicFiles = Object.freeze({
   '/login': ['login.html', 'text/html; charset=utf-8'],
   '/login.js': ['login.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/import.js': ['import.js', 'text/javascript; charset=utf-8'],
   '/opname.js': ['opname.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 });
@@ -44,12 +46,17 @@ function failure(response, status, errorCode, message, details = {}, headers = {
   json(response, status, { success: false, errorCode, message, details }, headers);
 }
 
-async function readJson(request) {
+async function readJson(request, options = {}) {
+  const {
+    maxBytes = 16_384,
+    errorCode,
+    sizeMessage = 'Request body too large.',
+  } = options;
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 16_384) throw Object.assign(new Error('Request body too large.'), { status: 413 });
+    if (size > maxBytes) throw Object.assign(new Error(sizeMessage), { status: 413, errorCode });
     chunks.push(chunk);
   }
   let value;
@@ -76,8 +83,14 @@ function isMasterScreen(pathname) {
     || /^\/masters\/(products|categories|units|unit-aliases|warehouses|suppliers)$/.test(pathname);
 }
 
+function isAuthenticatedScreen(pathname) {
+  return isMasterScreen(pathname) || pathname === '/imports';
+}
+
 async function servePublic(response, pathname) {
-  const asset = isMasterScreen(pathname) ? ['index.html', 'text/html; charset=utf-8'] : publicFiles[pathname];
+  const asset = isMasterScreen(pathname)
+    ? ['index.html', 'text/html; charset=utf-8']
+    : (pathname === '/imports' ? ['import.html', 'text/html; charset=utf-8'] : publicFiles[pathname]);
   if (!asset) return false;
   const body = await readFile(`${publicDirectory}${asset[0]}`);
   const htmlHeaders = asset[1].startsWith('text/html') ? {
@@ -97,7 +110,7 @@ async function servePublic(response, pathname) {
 
 async function route(request, response) {
   const path = new URL(request.url, 'http://localhost').pathname;
-  if (request.method === 'GET' && isMasterScreen(path)) {
+  if (request.method === 'GET' && isAuthenticatedScreen(path)) {
     if (!await authenticate(pool, request)) {
       response.writeHead(302, { location: '/login', 'cache-control': 'no-store' });
       response.end();
@@ -208,6 +221,10 @@ async function route(request, response) {
   }
 
   if (await handleTransactionRoute({
+    request, response, pool, appOrigin, json, failure, readJson,
+  })) return;
+
+  if (await handleImportRoute({
     request, response, pool, appOrigin, json, failure, readJson,
   })) return;
 

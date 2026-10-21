@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Preview Import — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/import.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/masters/products">Barang</a>
+      <a href="/imports" aria-current="page">Import</a>
+    </nav>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Import</p>
+        <h1 id="page-title" tabindex="-1">Preview CSV</h1>
+        <p>Validasi dan staging saja. Preview tidak mengubah stok.</p>
+      </div>
+    </header>
+    <section class="panel" aria-labelledby="upload-title">
+      <h2 id="upload-title">Pilih CSV</h2>
+      <form id="import-form" class="filters">
+        <div class="field">
+          <label for="import-type">Jenis import</label>
+          <select id="import-type" name="type" required>
+            <option value="PRODUCTS">Master barang</option>
+            <option value="STOCKIN">Barang masuk READY</option>
+            <option value="STAGING_OCR">OCR staging</option>
+          </select>
+        </div>
+        <div class="field grow">
+          <label for="import-file">File CSV, maksimum 1 MiB</label>
+          <input id="import-file" name="file" type="file" accept=".csv,text/csv" required>
+        </div>
+        <button id="preview-button" class="primary" type="submit">Buat preview</button>
+      </form>
+    </section>
+    <p id="preview-status" role="status" aria-live="polite"></p>
+    <section id="preview-errors" class="state error" role="alert" hidden></section>
+    <section id="preview-results" class="panel" aria-labelledby="preview-title" hidden>
+      <h2 id="preview-title">Hasil preview</h2>
+      <p id="preview-summary"></p>
+      <div class="table-scroll" tabindex="0" aria-label="Preview dapat digulir horizontal">
+        <table>
+          <thead><tr><th scope="col">Baris</th><th scope="col">Data</th><th scope="col">Status</th><th scope="col">Masalah</th></tr></thead>
+          <tbody id="preview-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
