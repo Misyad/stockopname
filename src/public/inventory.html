@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inventori — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/inventory.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/transactions/in">Barang Masuk</a>
+      <a href="/transactions/out">Barang Keluar</a>
+      <a href="/masters/products">Barang</a>
+      <a href="/imports">Import</a>
+    </nav>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Inventori</p>
+        <h1 id="page-title" tabindex="-1">Inventori</h1>
+        <p id="page-description">Data stok dari ledger.</p>
+      </div>
+    </header>
+    <section class="panel" aria-labelledby="filter-title">
+      <h2 id="filter-title">Filter</h2>
+      <form id="filters" class="filters"></form>
+    </section>
+    <p id="screen-status" role="status" aria-live="polite">Memuat data…</p>
+    <section id="error-state" class="state error" hidden>
+      <h2>Data gagal dimuat</h2>
+      <p id="error-message">Periksa koneksi lalu coba lagi.</p>
+      <button id="retry-button" type="button">Coba lagi</button>
+    </section>
+    <section id="empty-state" class="state" hidden>
+      <h2>Data tidak ditemukan</h2>
+      <p>Ubah filter lalu coba lagi.</p>
+    </section>
+    <section id="results" class="panel" hidden aria-label="Hasil inventori">
+      <div class="table-scroll" tabindex="0" aria-label="Tabel dapat digulir horizontal">
+        <table>
+          <thead><tr id="table-head"></tr></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+      <div class="pagination" aria-label="Paginasi">
+        <button id="previous-page" type="button">Sebelumnya</button>
+        <span id="page-summary">Halaman 1</span>
+        <button id="next-page" type="button">Berikutnya</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

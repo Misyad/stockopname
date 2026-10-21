@@ -25,6 +25,8 @@ const publicFiles = Object.freeze({
   '/login.js': ['login.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/import.js': ['import.js', 'text/javascript; charset=utf-8'],
+  '/inventory.js': ['inventory.js', 'text/javascript; charset=utf-8'],
+  '/transaction.js': ['transaction.js', 'text/javascript; charset=utf-8'],
   '/opname.js': ['opname.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 });
@@ -83,14 +85,26 @@ function isMasterScreen(pathname) {
     || /^\/masters\/(products|categories|units|unit-aliases|warehouses|suppliers)$/.test(pathname);
 }
 
+function inventoryScreen(pathname) {
+  return pathname === '/stock' || pathname === '/transactions'
+    || /^\/stock-card\/[^/]+$/.test(pathname);
+}
+
+function transactionScreen(pathname) {
+  return /^\/transactions\/(opening|in|out)$/.test(pathname);
+}
+
 function isAuthenticatedScreen(pathname) {
-  return isMasterScreen(pathname) || pathname === '/imports';
+  return isMasterScreen(pathname) || pathname === '/imports'
+    || inventoryScreen(pathname) || transactionScreen(pathname);
 }
 
 async function servePublic(response, pathname) {
-  const asset = isMasterScreen(pathname)
-    ? ['index.html', 'text/html; charset=utf-8']
-    : (pathname === '/imports' ? ['import.html', 'text/html; charset=utf-8'] : publicFiles[pathname]);
+  let asset = publicFiles[pathname];
+  if (isMasterScreen(pathname)) asset = ['index.html', 'text/html; charset=utf-8'];
+  else if (pathname === '/imports') asset = ['import.html', 'text/html; charset=utf-8'];
+  else if (inventoryScreen(pathname)) asset = ['inventory.html', 'text/html; charset=utf-8'];
+  else if (transactionScreen(pathname)) asset = ['transaction.html', 'text/html; charset=utf-8'];
   if (!asset) return false;
   const body = await readFile(`${publicDirectory}${asset[0]}`);
   const htmlHeaders = asset[1].startsWith('text/html') ? {
