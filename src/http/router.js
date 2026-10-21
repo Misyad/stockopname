@@ -5,7 +5,7 @@ import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { previewImport } from '../services/import.js';
 import {
-  approveOpname, createOpname, getOpname, rejectOpname,
+  approveOpname, createOpname, getOpname, listOpnames, rejectOpname,
   saveOpnameCounts, startOpname, submitOpname,
 } from '../services/opname.js';
 
@@ -103,16 +103,19 @@ export async function handleOpnameRoute({
   const path = new URL(request.url, 'http://localhost').pathname;
   const itemMatch = path.match(/^\/api\/opnames\/([0-9a-f-]+)(?:\/(start|counts|submit|approve|reject))?$/i);
   const isCreate = request.method === 'POST' && path === '/api/opnames';
+  const isList = request.method === 'GET' && path === '/api/opnames';
   const isDetail = request.method === 'GET' && itemMatch && !itemMatch[2];
   const isMutation = request.method === 'POST' && itemMatch && itemMatch[2];
-  if (!isCreate && !isDetail && !isMutation) return false;
+  if (!isCreate && !isList && !isDetail && !isMutation) return false;
   const actor = await authenticate(pool, request);
   if (!actor) {
     failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
     return true;
   }
-  if (isDetail) {
-    const data = await getOpname(pool, actor, itemMatch[1]);
+  if (isList || isDetail) {
+    const data = isList
+      ? await listOpnames(pool, actor, Object.fromEntries(new URL(request.url, 'http://localhost').searchParams))
+      : await getOpname(pool, actor, itemMatch[1]);
     json(response, 200, { success: true, data, message: 'OK' });
     return true;
   }

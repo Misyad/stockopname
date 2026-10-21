@@ -90,7 +90,8 @@ test('master screen and assets are served with semantic controls', async () => {
   assert.match(html, /<label[^>]+for="status-filter"/i);
   assert.match(html, /id="screen-status"[^>]+role="status"[^>]+aria-live="polite"/i);
   assert.match(html, /<dialog[^>]+aria-labelledby="form-title"[^>]+aria-describedby="form-description"/i);
-  assert.doesNotMatch(html, /href="\/(?:dashboard|opnames)"/i);
+  assert.match(html, /href="\/opnames"/i);
+  assert.doesNotMatch(html, /href="\/dashboard"/i);
 });
 
 test('master client handles role, async states, safe rendering, and no credential persistence', async () => {

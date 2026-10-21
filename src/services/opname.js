@@ -13,6 +13,7 @@ import {
   insertOpname,
   insertOpnameAudit,
   insertSnapshotItems,
+  listOpnames as listOpnameRows,
   listOpnameItems,
   lockOpnameInventory,
   lockWarehouseBalances,
@@ -26,6 +27,8 @@ import {
 } from '../repositories/opname.js';
 
 const allowedFields = new Set(['warehouse', 'date', 'notes']);
+const opnameStatuses = new Set(['DRAFT', 'COUNTING', 'SUBMITTED', 'APPROVED', 'REJECTED']);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function fault(status, errorCode, message, details = {}) {
   return Object.assign(new Error(message), { status, errorCode, details });
@@ -211,7 +214,78 @@ export async function getOpname(pool, sessionActor, id) {
     status: opname.status,
     createdBy: opname.created_by,
     notes: opname.notes,
+    rejectionReason: opname.rejection_reason,
     items: items.map((item) => itemResponse(item, actor)),
+  };
+}
+
+function optionalDate(value, field) {
+  if (value === undefined || value === null || value === '') return null;
+  try {
+    return isoDate(value);
+  } catch {
+    throw fault(400, 'VALIDATION_ERROR', `Invalid ${field}.`);
+  }
+}
+
+function escapedLike(value) {
+  return `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+}
+
+export async function listOpnames(pool, sessionActor, rawOptions = {}) {
+  const actor = await currentActor(pool, sessionActor);
+  const page = Number(rawOptions.page ?? 1);
+  const limit = Number(rawOptions.limit ?? 25);
+  const offset = (page - 1) * limit;
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit)
+      || limit < 1 || limit > 100 || !Number.isSafeInteger(offset)) {
+    throw fault(400, 'VALIDATION_ERROR', 'Invalid pagination.');
+  }
+  const status = rawOptions.status ? String(rawOptions.status).trim().toUpperCase() : null;
+  if (status && !opnameStatuses.has(status)) {
+    throw fault(400, 'VALIDATION_ERROR', 'Invalid opname status.');
+  }
+  const from = optionalDate(rawOptions.from, 'from');
+  const to = optionalDate(rawOptions.to, 'to');
+  if (from && to && from > to) throw fault(400, 'VALIDATION_ERROR', 'from must not exceed to.');
+  const q = rawOptions.q ? String(rawOptions.q).trim() : null;
+  if (q && q.length > 100) throw fault(400, 'VALIDATION_ERROR', 'Search query is too long.');
+  const warehouseId = rawOptions.warehouse_id ? String(rawOptions.warehouse_id).trim() : null;
+  if (warehouseId && !uuidPattern.test(warehouseId)) {
+    throw fault(400, 'VALIDATION_ERROR', 'Invalid warehouse_id.');
+  }
+  if (warehouseId) {
+    const warehouse = (await pool.query(
+      'SELECT id, region_id FROM warehouses WHERE id = $1', [warehouseId],
+    )).rows[0];
+    if (!warehouse) throw fault(422, 'INVALID_WAREHOUSE', 'Warehouse does not exist.');
+    if (warehouse.region_id !== actor.regionId) {
+      throw fault(403, 'REGION_FORBIDDEN', 'Warehouse is outside the user region.');
+    }
+  }
+  const result = await listOpnameRows(pool, {
+    regionId: actor.regionId, status, warehouseId, from, to,
+    q: q ? escapedLike(q) : null, limit, offset,
+  });
+  return {
+    items: result.rows.map((row) => ({
+      id: row.id,
+      opnameNumber: row.opname_number,
+      warehouseId: row.warehouse_id,
+      warehouseCode: row.warehouse_code,
+      warehouseName: row.warehouse_name,
+      date: row.opname_date_text,
+      status: row.status,
+      createdBy: row.created_by,
+      creatorName: row.creator_name,
+      notes: row.notes,
+      rejectionReason: row.rejection_reason,
+      itemCount: row.item_count,
+    })),
+    page,
+    limit,
+    total: result.total,
+    hasNext: page * limit < result.total,
   };
 }
 
