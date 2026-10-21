@@ -233,6 +233,9 @@ Repeat warehouse-scoped reads and mutations with IDs/codes from Region B while a
 - confirm valid file atomically writes stock
 - same file hash/row re-confirm adds zero stock
 - same stable key changed payload conflicts
+- concurrent same-key confirmation creates one effective commit
+- changed key after committed confirmation conflicts
+- warehouse moved outside actor region before confirm is denied with zero mutation
 - historical invoice transaction type equals `IN`
 - CSV formula content never executes and safe export escapes it
 

@@ -89,3 +89,52 @@ export async function insertImportAudit(client, audit) {
     VALUES (gen_random_uuid(), now(), $1, 'IMPORT_PREVIEW', 'IMPORT', $2, $3::jsonb)
   `, [audit.userId, audit.batchId, JSON.stringify(audit.details)]);
 }
+
+export async function importBatchForUpdate(client, batchId) {
+  const batch = (await client.query(`
+    SELECT * FROM import_batches WHERE id = $1 FOR UPDATE
+  `, [batchId])).rows[0];
+  if (!batch) return null;
+  const rows = (await client.query(`
+    SELECT id, row_number, to_char(date, 'YYYY-MM-DD') AS date, reference, supplier,
+      warehouse, code, batch, to_char(production_date, 'YYYY-MM-DD') AS production_date,
+      to_char(expiry, 'YYYY-MM-DD') AS expiry, trim_scale(quantity)::text AS quantity,
+      unit, trim_scale(price)::text AS price, notes, status, error_code, error_message
+    FROM ready_import_rows
+    WHERE import_batch_id = $1
+    ORDER BY row_number
+    FOR UPDATE
+  `, [batchId])).rows;
+  return { ...batch, rows };
+}
+
+export async function lockImportConfirmationKey(client, idempotencyKey) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [idempotencyKey]);
+  return (await client.query(`
+    SELECT id, confirmation_hash, confirmed_by
+    FROM import_batches
+    WHERE confirmation_key = $1
+  `, [idempotencyKey])).rows[0] || null;
+}
+
+export async function completeImportBatch(client, confirmation) {
+  await client.query(`
+    UPDATE ready_import_rows SET status = 'IMPORTED'
+    WHERE import_batch_id = $1 AND status = 'READY'
+  `, [confirmation.batchId]);
+  await client.query(`
+    UPDATE import_batches SET status = 'IMPORTED', confirmed_at = now(),
+      confirmation_key = $2, confirmation_hash = $3, confirmed_by = $4
+    WHERE id = $1
+  `, [
+    confirmation.batchId, confirmation.idempotencyKey,
+    confirmation.requestHash, confirmation.userId,
+  ]);
+  await client.query(`
+    INSERT INTO audit_logs (id, timestamp, user_id, action, module, reference, details)
+    VALUES (gen_random_uuid(), now(), $1, 'IMPORT_CONFIRM', 'IMPORT', $2, $3::jsonb)
+  `, [
+    confirmation.userId, confirmation.batchId,
+    JSON.stringify({ importedCount: confirmation.importedCount }),
+  ]);
+}

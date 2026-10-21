@@ -44,7 +44,7 @@ Evidence timestamp for runtime inspection: `2026-10-20T12:28:47Z`.
 | 1.1 Repository contract | `DONE` | package, server, unit test |
 | 1.2 Docker topology | `DONE` | Dockerfile, Compose, Docker integration test |
 | 2.1 Migration runner | `DONE` | checksum-verified forward migration runner |
-| 2.2 Initial schema | `DONE` | migrations `001`–`007`; schema tests |
+| 2.2 Initial schema | `DONE` | migrations `001`–`008`; schema tests |
 | 2.3 Reference seed | `DONE` | idempotent seed and integration test |
 | 3.1 Local authentication | `DONE` | DB sessions, secure cookie, login/logout tests |
 | 3.2 CSRF and login limiter | `DONE` | Origin/CSRF validation and limiter tests |
@@ -57,7 +57,7 @@ Evidence timestamp for runtime inspection: `2026-10-20T12:28:47Z`.
 | Opening Stock | `PARTIAL` | backend/API/tests done; transaction UI missing |
 | 5.4 Inventory read models | `PARTIAL` | backend/API/tests done; stock/card UI modules missing |
 | 6 Stock Opname | `PENDING` | schema/RBAC projection exist; workflow service/routes/UI absent |
-| 7 Import | `PENDING` | schema exists; preview/confirm service/routes/UI absent |
+| 7 Import | `DONE` | bounded preview/OCR staging plus atomic idempotent STOCKIN confirmation, UI, and tests |
 | 8 Dashboard/reports | `PENDING` | RBAC constants exist; read services/routes/UI absent |
 | 9.1 Detailed health/reconciliation | `PENDING` | only shallow `GET /health` exists |
 | 9.2 Backup/restore automation | `PENDING` | metadata schema exists; scripts and current restore evidence absent from repo |

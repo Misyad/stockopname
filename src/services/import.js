@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { authorize, CAPABILITIES } from '../http/middleware/rbac.js';
 import {
-  currentImportActor, insertImportAudit, insertImportBatch, insertOcrStagingRows,
-  insertReadyImportRows, loadImportReferences,
+  completeImportBatch, currentImportActor, importBatchForUpdate, insertImportAudit,
+  insertImportBatch, insertOcrStagingRows, insertReadyImportRows, loadImportReferences,
+  lockImportConfirmationKey,
 } from '../repositories/imports.js';
+import { createStockInInTransaction } from './transactions.js';
 
 const MAX_BYTES = 1024 * 1024;
 const MAX_ROWS = 100_000;
@@ -243,6 +245,95 @@ function validateInput(input) {
   }
   if (input.type === 'STAGING_OCR' && !/^STOCK_IN_REVIEW_.+\.csv$/i.test(input.fileName)) {
     throw fault(422, 'IMPORT_FILENAME_INVALID', 'OCR staging filename is invalid.');
+  }
+}
+
+function validateConfirmation(input) {
+  const allowed = ['previewVersion', 'idempotencyKey'];
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).some((key) => !allowed.includes(key))) {
+    throw fault(400, 'VALIDATION_ERROR', 'Invalid import confirmation request.');
+  }
+  const previewVersion = String(input.previewVersion ?? '').trim();
+  const idempotencyKey = String(input.idempotencyKey ?? '').trim();
+  if (!/^\d+$/.test(previewVersion) || !idempotencyKey || idempotencyKey.length > 200) {
+    throw fault(400, 'VALIDATION_ERROR', 'previewVersion and idempotencyKey are required.');
+  }
+  return { previewVersion, idempotencyKey };
+}
+
+export async function confirmImport(pool, sessionActor, batchId, rawInput) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(batchId)) {
+    throw fault(400, 'VALIDATION_ERROR', 'Invalid import batch ID.');
+  }
+  const input = validateConfirmation(rawInput);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const actor = await currentImportActor(client, sessionActor?.userId);
+    authorize(actor, CAPABILITIES.IMPORT_CONFIRM);
+    const batch = await importBatchForUpdate(client, batchId);
+    if (!batch) throw fault(404, 'IMPORT_NOT_FOUND', 'Import batch not found.');
+    if (batch.import_type !== 'STOCKIN') {
+      throw fault(409, 'IMPORT_TYPE_UNSUPPORTED', 'Only STOCKIN confirmation is supported.');
+    }
+    if (String(batch.preview_version) !== input.previewVersion) {
+      throw fault(409, 'IMPORT_PREVIEW_STALE', 'Import preview version changed.');
+    }
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify({ batchId, previewVersion: input.previewVersion }))
+      .digest('hex');
+    const prior = await lockImportConfirmationKey(client, input.idempotencyKey);
+    const identityMatches = batch.confirmation_key === input.idempotencyKey
+      && batch.confirmation_hash === requestHash
+      && batch.confirmed_by === actor.userId;
+    if (prior && (prior.id !== batchId || prior.confirmation_hash !== requestHash
+        || prior.confirmed_by !== actor.userId)) {
+      throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different payload.');
+    }
+    if (batch.status === 'IMPORTED') {
+      if (!identityMatches) {
+        throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Import batch was confirmed with a different identity.');
+      }
+      await client.query('COMMIT');
+      return { batchId, status: 'IMPORTED', importedCount: batch.row_count };
+    }
+    if (batch.status !== 'READY' || batch.rows.length !== batch.row_count
+        || batch.rows.some((row) => row.status !== 'READY')) {
+      throw fault(409, 'IMPORT_REVIEW_REQUIRED', 'All import rows must be READY.');
+    }
+
+    for (const row of batch.rows) {
+      await createStockInInTransaction(client, actor, {
+        idempotencyKey: `${input.idempotencyKey}:${row.row_number}`,
+        date: row.date,
+        reference: row.reference,
+        supplier: row.supplier || undefined,
+        warehouse: row.warehouse,
+        code: row.code,
+        batch: row.batch || undefined,
+        production_date: row.production_date || undefined,
+        expiry: row.expiry || undefined,
+        quantity: row.quantity,
+        unit: row.unit,
+        price: row.price,
+        notes: row.notes || undefined,
+      });
+    }
+    await completeImportBatch(client, {
+      batchId,
+      idempotencyKey: input.idempotencyKey,
+      requestHash,
+      userId: actor.userId,
+      importedCount: batch.rows.length,
+    });
+    await client.query('COMMIT');
+    return { batchId, status: 'IMPORTED', importedCount: batch.rows.length };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
