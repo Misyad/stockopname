@@ -14,6 +14,7 @@ import {
   insertStockBatch,
   insertStockOutRequest,
   insertStockTransaction,
+  lockInventoryMaintenanceShared,
   lockIdempotency,
   lockStock,
   lockWarehouseStock,
@@ -40,6 +41,7 @@ async function runTransaction(pool, idempotencyKey, mutate) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await lockInventoryMaintenanceShared(client);
     await lockIdempotency(client, idempotencyKey);
     const result = await mutate(client);
     await client.query('COMMIT');
@@ -276,6 +278,7 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
 }
 
 export async function runInventoryMutationInTransaction(client, idempotencyKey, prepare) {
+  await lockInventoryMaintenanceShared(client);
   await lockIdempotency(client, idempotencyKey);
   return executeInventoryMutation(client, idempotencyKey, prepare);
 }

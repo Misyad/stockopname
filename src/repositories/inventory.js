@@ -1,3 +1,19 @@
+const inventoryMaintenanceLockKey = '7309472203';
+
+export async function lockInventoryMaintenanceExclusive(client) {
+  await client.query(
+    'SELECT pg_advisory_xact_lock($1::bigint)',
+    [inventoryMaintenanceLockKey],
+  );
+}
+
+export async function lockInventoryMaintenanceShared(client) {
+  await client.query(
+    'SELECT pg_advisory_xact_lock_shared($1::bigint)',
+    [inventoryMaintenanceLockKey],
+  );
+}
+
 export async function lockIdempotency(client, key) {
   await client.query(
     'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',

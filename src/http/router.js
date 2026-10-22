@@ -6,7 +6,7 @@ import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { dashboard } from '../services/dashboard.js';
 import { exportReportCsv, listReport } from '../services/reports.js';
 import { createBackup, listBackups } from '../services/backup.js';
-import { detailedHealth } from '../services/maintenance.js';
+import { detailedHealth, rebuildBalances } from '../services/maintenance.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { confirmImport, previewImport } from '../services/import.js';
 import {
@@ -206,14 +206,15 @@ export async function handleMaintenanceRoute({
   const health = request.method === 'GET' && path === '/api/maintenance/health-check';
   const list = request.method === 'GET' && path === '/api/maintenance/backups';
   const backup = request.method === 'POST' && path === '/api/maintenance/backup';
-  if (!health && !list && !backup) return false;
+  const rebuild = request.method === 'POST' && path === '/api/maintenance/rebuild-balances';
+  if (!health && !list && !backup && !rebuild) return false;
   const actor = await authenticate(pool, request);
   if (!actor) {
     failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
     return true;
   }
-  if (backup) {
-    authorize(actor, CAPABILITIES.BACKUP);
+  if (backup || rebuild) {
+    authorize(actor, backup ? CAPABILITIES.BACKUP : CAPABILITIES.REBUILD);
     if (!validOrigin(request, appOrigin)) {
       failure(response, 403, 'ORIGIN_INVALID', 'Origin is not allowed.');
       return true;
@@ -234,7 +235,8 @@ export async function handleMaintenanceRoute({
   }
   const data = health
     ? await detailedHealth(pool, actor)
-    : list ? await listBackups(pool, actor) : await createBackup(pool, actor);
+    : list ? await listBackups(pool, actor)
+      : backup ? await createBackup(pool, actor) : await rebuildBalances(pool, actor);
   json(response, 200, { success: true, data, message: 'OK' });
   return true;
 }

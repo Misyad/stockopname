@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { authorize, CAPABILITIES } from '../http/middleware/rbac.js';
+import { lockInventoryMaintenanceExclusive } from '../repositories/inventory.js';
 
 const migrationsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../db/migrations');
 let expectedMigrations;
@@ -212,6 +213,144 @@ export async function readiness(pool) {
     return true;
   } catch {
     return false;
+  }
+}
+
+export async function rebuildBalances(pool, sessionActor) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const row = (await client.query(
+      "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE' FOR SHARE",
+      [sessionActor?.userId],
+    )).rows[0];
+    if (!row) throw fault(401, 'UNAUTHENTICATED', 'Authentication required.');
+    const actor = { userId: row.id, role: row.role, regionId: row.region_id };
+    authorize(actor, CAPABILITIES.REBUILD);
+    const backup = (await client.query(`
+      SELECT id FROM backup_logs
+      WHERE status = 'VERIFIED' AND retained AND verified_at >= now() - interval '24 hours'
+      ORDER BY verified_at DESC, id DESC LIMIT 1 FOR SHARE
+    `)).rows[0];
+    if (!backup) {
+      throw fault(409, 'VERIFIED_BACKUP_REQUIRED', 'Recent verified backup is required.');
+    }
+
+    await lockInventoryMaintenanceExclusive(client);
+    await client.query(`
+      CREATE TEMP TABLE rebuild_balance_candidates ON COMMIT DROP AS
+      WITH ordered AS (
+        SELECT transactions.product_id, transactions.warehouse_id,
+          transactions.quantity, transactions.balance_before, transactions.balance_after,
+          row_number() OVER ledger_order AS position,
+          lag(transactions.balance_after) OVER ledger_order AS previous_balance
+        FROM stock_transactions transactions
+        JOIN warehouses ON warehouses.id = transactions.warehouse_id
+        WHERE warehouses.region_id = $1
+        WINDOW ledger_order AS (
+          PARTITION BY transactions.product_id, transactions.warehouse_id
+          ORDER BY transactions.ledger_sequence
+        )
+      )
+      SELECT product_id, warehouse_id, sum(quantity) AS quantity,
+        bool_and(
+          balance_after = balance_before + quantity
+          AND balance_after >= 0
+          AND CASE WHEN position = 1 THEN balance_before = 0
+            ELSE balance_before = previous_balance END
+        ) AS chain_valid
+      FROM ordered GROUP BY product_id, warehouse_id
+    `, [actor.regionId]);
+    const unsafe = (await client.query(`
+      SELECT count(*)::int AS issue_count FROM rebuild_balance_candidates
+      WHERE NOT chain_valid OR quantity < 0
+    `)).rows[0].issue_count;
+    if (unsafe > 0) {
+      throw fault(409, 'REBUILD_UNSAFE_LEDGER', 'Ledger cannot produce a safe balance cache.');
+    }
+    const batchIssues = (await client.query(`
+      WITH batch_totals AS (
+        SELECT batches.product_id, batches.warehouse_id, sum(batches.quantity) AS quantity
+        FROM stock_batches batches
+        JOIN warehouses ON warehouses.id = batches.warehouse_id
+        WHERE warehouses.region_id = $1
+        GROUP BY batches.product_id, batches.warehouse_id
+      ), keys AS (
+        SELECT product_id, warehouse_id FROM rebuild_balance_candidates
+        UNION SELECT product_id, warehouse_id FROM batch_totals
+      )
+      SELECT count(*)::int AS issue_count FROM keys
+      LEFT JOIN rebuild_balance_candidates candidates USING (product_id, warehouse_id)
+      LEFT JOIN batch_totals USING (product_id, warehouse_id)
+      WHERE candidates.quantity IS DISTINCT FROM batch_totals.quantity
+    `, [actor.regionId])).rows[0].issue_count;
+    if (batchIssues > 0) {
+      throw fault(409, 'REBUILD_RECONCILIATION_FAILED', 'Ledger and batch stock do not reconcile.');
+    }
+
+    const updated = await client.query(`
+      UPDATE stock_balances balances
+      SET quantity = candidates.quantity, version = balances.version + 1, updated_at = now()
+      FROM rebuild_balance_candidates candidates
+      WHERE balances.product_id = candidates.product_id
+        AND balances.warehouse_id = candidates.warehouse_id
+        AND balances.quantity IS DISTINCT FROM candidates.quantity
+    `);
+    const inserted = await client.query(`
+      INSERT INTO stock_balances (id, product_id, warehouse_id, quantity, version, updated_at)
+      SELECT gen_random_uuid(), candidates.product_id, candidates.warehouse_id,
+        candidates.quantity, 1, now()
+      FROM rebuild_balance_candidates candidates
+      WHERE NOT EXISTS (
+        SELECT 1 FROM stock_balances balances
+        WHERE balances.product_id = candidates.product_id
+          AND balances.warehouse_id = candidates.warehouse_id
+      )
+    `);
+    const deleted = await client.query(`
+      DELETE FROM stock_balances balances
+      USING warehouses
+      WHERE warehouses.id = balances.warehouse_id AND warehouses.region_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM rebuild_balance_candidates candidates
+          WHERE candidates.product_id = balances.product_id
+            AND candidates.warehouse_id = balances.warehouse_id
+        )
+    `, [actor.regionId]);
+    const postIssues = (await client.query(`
+      WITH regional_balances AS (
+        SELECT balances.product_id, balances.warehouse_id, balances.quantity
+        FROM stock_balances balances
+        JOIN warehouses ON warehouses.id = balances.warehouse_id
+        WHERE warehouses.region_id = $1
+      ), keys AS (
+        SELECT product_id, warehouse_id FROM rebuild_balance_candidates
+        UNION SELECT product_id, warehouse_id FROM regional_balances
+      )
+      SELECT count(*)::int AS issue_count FROM keys
+      LEFT JOIN rebuild_balance_candidates candidates USING (product_id, warehouse_id)
+      LEFT JOIN regional_balances balances USING (product_id, warehouse_id)
+      WHERE candidates.quantity IS DISTINCT FROM balances.quantity
+    `, [actor.regionId])).rows[0].issue_count;
+    if (postIssues > 0) {
+      throw fault(409, 'REBUILD_RECONCILIATION_FAILED', 'Rebuilt balance cache did not reconcile.');
+    }
+    const repairedBalances = updated.rowCount + inserted.rowCount + deleted.rowCount;
+    await client.query(`
+      INSERT INTO audit_logs (id, timestamp, user_id, action, module, reference, details)
+      VALUES ($1, now(), $2, 'BALANCE_REBUILT', 'MAINTENANCE', $3, $4::jsonb)
+    `, [randomUUID(), actor.userId, backup.id, JSON.stringify({
+      backupId: backup.id, regionId: actor.regionId, repairedBalances,
+    })]);
+    await client.query('COMMIT');
+    return {
+      status: 'PASS', backupId: backup.id, regionId: actor.regionId, repairedBalances,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 }
 

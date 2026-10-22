@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   authorize, CAPABILITIES, projectOpnameItem,
 } from '../http/middleware/rbac.js';
-import { insertStockTransaction, readInventoryReconciliation } from '../repositories/inventory.js';
+import {
+  insertStockTransaction, lockInventoryMaintenanceShared, readInventoryReconciliation,
+} from '../repositories/inventory.js';
 import {
   applyAdjustmentQuantity,
   approvalSnapshotMatches,
@@ -421,6 +423,7 @@ export async function approveOpname(pool, sessionActor, id, rawInput) {
   return runOpnameMutation(
     pool, sessionActor, id, CAPABILITIES.OPNAME_APPROVE, ['SUBMITTED'],
     async (client, actor, opname) => {
+      await lockInventoryMaintenanceShared(client);
       await lockOpnameInventory(client, opname.warehouse_id);
       if (await hasPostSnapshotMovement(client, opname)) {
         throw fault(409, 'STOCK_MOVED_DURING_OPNAME', 'Stock moved after the opname snapshot.');
