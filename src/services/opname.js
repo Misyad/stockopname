@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   authorize, CAPABILITIES, projectOpnameItem,
 } from '../http/middleware/rbac.js';
-import { insertStockTransaction, readInventoryReconciliation } from '../repositories/inventory.js';
+import {
+  insertStockTransaction, lockStockWriter, readInventoryReconciliation,
+} from '../repositories/inventory.js';
 import {
   applyAdjustmentQuantity,
   approvalSnapshotMatches,
@@ -102,6 +104,8 @@ export async function createOpname(pool, sessionActor, rawInput) {
       throw fault(403, 'REGION_FORBIDDEN', 'Warehouse is outside the user region.');
     }
 
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await lockStockWriter(client);
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
       [`warehouse-stock:${warehouse.id}`],
@@ -421,6 +425,8 @@ export async function approveOpname(pool, sessionActor, id, rawInput) {
   return runOpnameMutation(
     pool, sessionActor, id, CAPABILITIES.OPNAME_APPROVE, ['SUBMITTED'],
     async (client, actor, opname) => {
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await lockStockWriter(client);
       await lockOpnameInventory(client, opname.warehouse_id);
       if (await hasPostSnapshotMovement(client, opname)) {
         throw fault(409, 'STOCK_MOVED_DURING_OPNAME', 'Stock moved after the opname snapshot.');

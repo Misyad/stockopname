@@ -67,7 +67,10 @@ test('Compose starts healthy non-root app and internal PostgreSQL', { timeout: 2
 
     const response = await fetchHealth(`http://127.0.0.1:${port}/health`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { success: true });
+    assert.deepEqual(await response.json(), {
+      success: true,
+      data: { app: 'UP', database: 'UP' },
+    });
 
     const appId = compose(['ps', '-q', 'app'], env).trim();
     const databaseId = compose(['ps', '-q', 'database'], env).trim();

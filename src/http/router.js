@@ -2,6 +2,12 @@ import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
+import {
+  dashboard, inventoryReport, streamInventoryReportCsv,
+} from '../services/report-operations.js';
+import { detailedHealth } from '../services/maintenance.js';
+import { createBackup, listBackups } from '../services/backup.js';
+import { rebuildBalances } from '../services/rebuild.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { confirmImport, previewImport } from '../services/import.js';
 import {
@@ -166,6 +172,87 @@ export async function handleInventoryReadRoute({ request, response, pool, json, 
   else if (url.pathname === '/api/transactions') data = await listTransactions(pool, actor, options);
   else data = await stockCard(pool, actor, stockCardMatch[1], options);
   json(response, 200, { success: true, data, message: 'OK' });
+  return true;
+}
+
+export async function handleReportRoute({ request, response, pool, json, failure }) {
+  if (request.method !== 'GET') return false;
+  const url = new URL(request.url, 'http://localhost');
+  const match = url.pathname.match(/^\/api\/reports\/([A-Z_]+)(?:\/export)?$/i);
+  const isDashboard = url.pathname === '/api/dashboard';
+  if (!isDashboard && !match) return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  const options = Object.fromEntries(url.searchParams);
+  if (isDashboard) {
+    json(response, 200, { success: true, data: await dashboard(pool, actor), message: 'OK' });
+    return true;
+  }
+  const exportRequested = url.pathname.endsWith('/export') || options.format !== undefined;
+  if (!exportRequested) {
+    const data = await inventoryReport(pool, actor, match[1], options);
+    json(response, 200, { success: true, data, message: 'OK' });
+    return true;
+  }
+  if (String(options.format || 'CSV').toUpperCase() !== 'CSV') {
+    failure(response, 400, 'VALIDATION_ERROR', 'Only CSV export is supported.');
+    return true;
+  }
+  // Validate before headers: service loads first page before emitting CSV header.
+  let started = false;
+  await streamInventoryReportCsv(pool, actor, match[1], options, async (chunk) => {
+    if (!started) {
+      response.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${match[1].toLowerCase()}.csv"`,
+        'x-content-type-options': 'nosniff',
+      });
+      started = true;
+    }
+    if (!response.write(chunk)) await new Promise((resolve) => response.once('drain', resolve));
+  });
+  response.end();
+  return true;
+}
+
+export async function handleMaintenanceRoute({
+  request, response, pool, appOrigin, json, failure, readJson,
+}) {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  const health = path === '/api/maintenance/health-check' && request.method === 'GET';
+  const backups = path === '/api/maintenance/backups' && request.method === 'GET';
+  const backup = path === '/api/maintenance/backup' && request.method === 'POST';
+  const rebuild = path === '/api/maintenance/rebuild-balances' && request.method === 'POST';
+  if (!health && !backups && !backup && !rebuild) return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  if (backup || rebuild) {
+    if (!validOrigin(request, appOrigin)) {
+      failure(response, 403, 'ORIGIN_INVALID', 'Origin is not allowed.');
+      return true;
+    }
+    const secret = sessionSecret(request);
+    if (!await validCsrf(pool, secret, request.headers['x-csrf-token'])) {
+      failure(response, 403, 'CSRF_INVALID', 'CSRF token is invalid.');
+      return true;
+    }
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+      failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
+      return true;
+    }
+    await readJson(request);
+  }
+  const data = health
+    ? await detailedHealth(pool, actor)
+    : backups ? await listBackups(pool, actor)
+      : backup ? await createBackup(pool, actor) : await rebuildBalances(pool, actor);
+  json(response, backup ? 201 : 200, { success: true, data, message: 'OK' });
   return true;
 }
 

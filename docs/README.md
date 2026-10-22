@@ -3,7 +3,8 @@
 Living product contract dan dokumentasi as-built aplikasi Stock Opname modular monolith Node.js + PostgreSQL dalam Docker Compose.
 
 **Product contract:** Approved v0.1.0 pada 2026-10-08; aturan bisnis tetap berlaku  
-**Implementation:** Phase 1–4 dan 5.1–5.3 backend selesai; rincian di [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)  
+**Implementation:** Candidate implements core UI/API, Opname, import confirmation, dashboard/reports, and recovery operations; release gates remain separate
+
 **Repository:** `git@github.com:Misyad/stockopname.git`; checkout lokal `/root/stock-opname`  
 **Runtime evidence:** production aktif pada revision `cff1796cb8d3798b097cb17d790736500c9765c2`; release/cutover gate formal tetap terpisah
 
@@ -163,51 +164,52 @@ Expected final startup result:
 
 ```bash
 pnpm test
-pnpm test:integration
 pnpm test:security
-pnpm test:migration
-pnpm test:ui
+pnpm test:integration
 pnpm lint
 pnpm build
 docker compose config
 docker compose build
 ```
 
-Current CI on `main` revision `cff1796c`: `PASS`. Commands without package scripts (`test:migration`, `test:ui`, backup, restore, detailed health) remain `NOT IMPLEMENTED` or `NOT VERIFIED`; absence is never PASS.
+Current CI on `main` revision `cff1796c`: `PASS`. Working-tree changes require their own verified gates; baseline CI is not evidence for them.
 
 ## Health
 
-Implemented endpoint:
+Implemented endpoints:
 
 ```text
+GET /live
 GET /health
+GET /api/maintenance/health-check
 ```
 
-`GET /api/health` and protected `GET /api/maintenance/health-check` from approved contract remain pending. Current `/health` returns shallow process health only; detailed reconciliation is not implemented.
+`/live` checks process liveness. `/health` checks app and database readiness without sensitive detail. Protected detailed health checks schema, references, negatives, ledger/balance, batch/balance, opname state, audit completeness, and backup RPO.
 
 ## Backup Quick Guide
 
-Planned workflow:
+Implemented workflow:
 
 ```text
 Create local backup
 → calculate checksum
-→ copy to Google Drive
-→ record backup metadata
 → restore into isolated PostgreSQL
-→ reconcile
-→ mark VERIFIED
+→ reconcile and clean isolated database
+→ copy to independent storage/Google Drive
+→ apply 7/4/12 retention
+→ record VERIFIED metadata
 ```
 
 Retention: 7 daily, 4 weekly, 12 monthly. Presence alone does not prove backup validity.
 
-Planned commands after scripts exist:
+Commands:
 
 ```bash
 pnpm backup
 pnpm restore:verify -- <backup-file>
-pnpm health:check
 ```
+
+Backup requires `BACKUP_ACTOR_ID`. Restore verification accepts only files inside `BACKUP_LOCAL_DIR` and always restores into an isolated temporary database.
 
 Production restore, retention cleanup, volume deletion, and DB reset require explicit approval. Never use `docker compose down -v` on retained data.
 
@@ -287,10 +289,12 @@ Detailed sources: [`API.md`](API.md), [`SECURITY.md`](SECURITY.md), [`TEST_PLAN.
 - [x] Opening Stock, Stock In, dan FEFO Stock Out backend/API implemented
 - [x] GitHub CI `main` revision `cff1796c` PASS
 - [x] Public `/health` and `/login` return HTTP 200 on 2026-10-20
-- [ ] Transaction UI and inventory read models
-- [ ] Stock Opname workflow end-to-end
-- [ ] Import, dashboard, reports, protected reconciliation
-- [ ] Backup/restore automation and isolated restore evidence
+- [x] Transaction UI and inventory read models implemented in candidate
+- [x] Stock Opname workflow end-to-end implemented in candidate
+- [x] Import confirmation, dashboard, reports, protected reconciliation implemented in candidate
+- [x] Backup/restore automation and isolated restore evidence implemented in candidate
+- [ ] Candidate commit, immutable image, CI, reviewer gate
+- [ ] Dedicated staging HTTPS, exact-artifact restore drill, and formal UAT
 - [ ] Sheets migration rehearsal/cutover evidence
 - [ ] Full P0 release gate, including remaining features
 

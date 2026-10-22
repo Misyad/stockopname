@@ -72,11 +72,12 @@ PostgreSQL transaction
 
 Roles:
 
-- `ADMIN`: all capabilities inside the user's region; master data, users, imports, backup, health check, rebuild.
+- `ADMIN`: all warehouse/data capabilities inside the user's region; master data, users, imports, health check, rebuild. Backup is the only instance-global exception: every ADMIN may create a full-database backup and list global backup metadata.
 - `SUPERVISOR`: dashboard, transactions, create/count/submit stock opname, approval/rejection inside the user's region, reports.
 - `PETUGAS`: stock movement, stock visibility, and physical counting inside the user's region; cannot approve adjustment or modify audit logs.
 - Every user belongs to exactly one region. Every warehouse belongs to exactly one region.
 - Every warehouse-scoped read and mutation must enforce `user.region_id = warehouse.region_id` server-side for every role, including ADMIN.
+- Backup is not warehouse-scoped: its artifact contains the full instance database and its metadata is global across ADMIN users. API responses never expose storage URIs or backup file access.
 
 Rules:
 

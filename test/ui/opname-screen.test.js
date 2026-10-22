@@ -43,7 +43,7 @@ before(async () => {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  await waitFor(`${origin}/health`, child);
+  await waitFor(`${origin}/live`, child);
 });
 
 after(() => child?.kill('SIGTERM'));

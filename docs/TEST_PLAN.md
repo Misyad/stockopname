@@ -278,6 +278,8 @@ Repeat warehouse-scoped reads and mutations with IDs/codes from Region B while a
 | OPS-006 | timed restore drill | service recovery <=4h |
 | OPS-007 | health with negative/mismatch fixture | detects exact issue |
 | OPS-008 | backup/restore failure | actionable audit, no false success |
+| OPS-009 | ADMIN from another region creates backup and lists metadata | full-instance backup succeeds; same global records; no storage URI/file access |
+| OPS-010 | concurrent backup | second request fails `BACKUP_IN_PROGRESS` before log/artifact mutation |
 
 ## 18. Concurrency Harness
 

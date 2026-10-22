@@ -16,6 +16,7 @@ import {
   insertStockTransaction,
   lockIdempotency,
   lockStock,
+  lockStockWriter,
   lockWarehouseStock,
   planFefoAllocations,
   readInventoryReconciliation,
@@ -40,6 +41,8 @@ async function runTransaction(pool, idempotencyKey, mutate) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await lockStockWriter(client);
     await lockIdempotency(client, idempotencyKey);
     const result = await mutate(client);
     await client.query('COMMIT');
@@ -276,6 +279,7 @@ export async function runInventoryMutation(pool, idempotencyKey, prepare) {
 }
 
 export async function runInventoryMutationInTransaction(client, idempotencyKey, prepare) {
+  await lockStockWriter(client);
   await lockIdempotency(client, idempotencyKey);
   return executeInventoryMutation(client, idempotencyKey, prepare);
 }

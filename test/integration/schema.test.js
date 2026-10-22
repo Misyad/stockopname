@@ -82,12 +82,12 @@ function cleanup(env) {
 
 const typeNames = {
   b: 'bigint', d: 'date', i: 'integer', j: 'jsonb', n: 'numeric',
-  t: 'text', u: 'uuid', v: 'character varying', z: 'timestamp with time zone',
+  o: 'boolean', t: 'text', u: 'uuid', v: 'character varying', z: 'timestamp with time zone',
 };
 const schemaContract = {
   audit_logs: 'id:u! timestamp:z! user_id:u action:v! module:v! reference:v details:j!={}',
   auth_sessions: 'id:u! user_id:u! reference:v! secret_hash:v! csrf_secret_hash:v! expires_at:z! last_seen_at:z revoked_at:z created_at:z!',
-  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z',
+  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z restore_duration_ms:b cleanup_verified:o!=false',
   categories: 'id:u! code:v! name:v! status:v created_at:z updated_at:z',
   import_batches: 'id:u! import_type:v file_name:v! file_hash:v! preview_version:b!=1 status:v row_count:i!=0 created_by:u! created_at:z! confirmed_at:z confirmation_key:v confirmation_hash:v confirmed_by:u',
   products: 'id:u! code:v! barcode:v name:v! category_id:u! base_unit_id:u! purchase_unit_id:u conversion_factor:n! minimum_stock:n!=0 maximum_stock:n!=0 photo_url:t status:v created_at:z updated_at:z',
@@ -109,7 +109,7 @@ const schemaContract = {
 const expectedDefinitions = new Map();
 const expectedColumns = new Map(Object.entries(schemaContract).map(([table, contract]) => {
   const columns = contract.split(' ').map((entry) => {
-    const [, column, type, required, defaultValue] = entry.match(/^(\w+):([bdijntuvz])(!)?(?:=(.*))?$/);
+    const [, column, type, required, defaultValue] = entry.match(/^(\w+):([bdijnotuvz])(!)?(?:=(.*))?$/);
     expectedDefinitions.set(`${table}.${column}`, {
       type: typeNames[type], nullable: required ? 'NO' : 'YES', defaultValue: defaultValue ?? '',
     });
@@ -141,7 +141,8 @@ const expectedForeignKeys = [
 ].sort();
 
 const expectedChecks = [
-  'backup_logs_status_check', 'categories_status_check', 'regions_status_check',
+  'backup_logs_restore_duration_nonnegative', 'backup_logs_status_check',
+  'categories_status_check', 'regions_status_check',
   'import_batches_confirmation_identity_check', 'import_batches_import_type_check',
   'import_batches_row_count_check', 'import_batches_status_check',
   'products_conversion_factor_check', 'products_maximum_stock_check',

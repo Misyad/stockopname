@@ -36,7 +36,11 @@ h1 { font-size: clamp(1.65rem, 7vw, 2.2rem); margin-bottom: .3rem; }
 #page-description, #screen-status { color: var(--muted); }
 .panel, .state, dialog { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgb(23 33 27 / 7%); }
 .panel, .state { padding: 1rem; margin-bottom: 1rem; }
-.filters { display: grid; gap: .8rem; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.dashboard-grid .panel { margin-bottom: 0; }
+.dashboard-grid strong { display: block; margin-top: .5rem; font-size: 1.75rem; }
+.button-link { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: .65rem .8rem; border-radius: 8px; text-decoration: none; }
+.filters, .report-filters { display: grid; gap: .8rem; }
 .field { min-width: 0; display: grid; gap: .35rem; }
 .field > * { min-width: 0; max-width: 100%; }
 .field label { font-size: .875rem; font-weight: 700; }

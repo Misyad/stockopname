@@ -322,11 +322,13 @@ ADMIN/SUPERVISOR. Checks schema, references, negatives, ledger/balance mismatch,
 
 ### `POST /maintenance/backup`
 
-ADMIN only. Creates backup, records metadata, checksum, and status.
+ADMIN only. Instance-global exception: creates a full-instance database backup and records global metadata, checksum, and status. Region does not filter the artifact or metadata. Response omits storage URI and file access.
+
+Errors: `BACKUP_IN_PROGRESS` when another instance-global backup holds the advisory lock; `BACKUP_FAILED` when dump, copy, or isolated restore verification fails.
 
 ### `GET /maintenance/backups`
 
-ADMIN only. Lists backup metadata.
+ADMIN only. Lists global backup metadata across regions. Response omits storage URI and file access.
 
 ### `POST /maintenance/rebuild-balances`
 

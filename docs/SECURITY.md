@@ -127,13 +127,14 @@ Do not set `Domain` unless cross-subdomain scope is explicitly required.
 | Health detail | Yes | Read | No |
 | Audit edit/delete | No | No | No |
 
-Warehouse access uses role plus region. Middleware enforces route role; service resolves the warehouse and enforces `user.region_id = warehouse.region_id` again. Frontend hiding is not authorization.
+Warehouse access uses role plus region. Middleware enforces route role; service resolves the warehouse and enforces `user.region_id = warehouse.region_id` again. Frontend hiding is not authorization. Backup is the only instance-global ADMIN exception because the artifact is a full database dump: all ADMIN users may create it and list global metadata, but API responses never expose storage URIs or file access.
 
 ## 9. Mandatory Negative Authorization Tests
 
 - anonymous request to every protected group returns 401
 - PETUGAS approve/reject/opening/import/backup/rebuild/user/master mutation returns 403
 - SUPERVISOR user/master mutation/import/backup/rebuild returns 403
+- ADMIN users in different regions can create full-instance backups and see the same global backup metadata; neither response exposes storage URI or file access
 - second PETUGAS non-owner counter mutation returns 403
 - SUPERVISOR counter mutation for any opname is allowed; approval of the same opname still requires all state/snapshot checks
 - role changed/deactivated during session blocks next request
