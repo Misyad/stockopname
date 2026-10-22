@@ -1,14 +1,14 @@
 const cards = Object.freeze([
   ['total_products', 'Total barang', '/stock'],
   ['total_stock', 'Total stok', null],
-  ['safe', 'Stok aman', null],
-  ['low', 'Stok rendah', null],
-  ['out', 'Stok habis', null],
-  ['expired', 'Expired', null],
-  ['expiring_7d', 'Expired ≤ 7 hari', null],
-  ['expiring_30d', 'Expired ≤ 30 hari', null],
+  ['safe', 'Stok aman', '/stock?status=SAFE'],
+  ['low', 'Stok rendah', '/stock?status=LOW'],
+  ['out', 'Stok habis', '/stock?status=OUT'],
+  ['expired', 'Expired', '/reports?type=BATCH_EXPIRY&status=EXPIRED'],
+  ['expiring_7d', 'Expired ≤ 7 hari', '/reports?type=BATCH_EXPIRY&status=EXPIRING_7D'],
+  ['expiring_30d', 'Expired ≤ 30 hari', '/reports?type=BATCH_EXPIRY&status=EXPIRING_30D'],
   ['pending_opnames', 'Pending opname', '/opnames?status=SUBMITTED'],
-  ['total_adjustment', 'Total adjustment', null],
+  ['total_adjustment', 'Total adjustment', '/reports?type=ADJUSTMENT'],
 ]);
 
 const status = document.querySelector('#screen-status');

@@ -30,6 +30,7 @@ const publicFiles = Object.freeze({
   '/transaction.js': ['transaction.js', 'text/javascript; charset=utf-8'],
   '/opname.js': ['opname.js', 'text/javascript; charset=utf-8'],
   '/dashboard.js': ['dashboard.js', 'text/javascript; charset=utf-8'],
+  '/reports.js': ['reports.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 });
 const publicDirectory = fileURLToPath(new URL('./public/', import.meta.url));
@@ -102,7 +103,7 @@ function opnameScreen(pathname) {
 
 function isAuthenticatedScreen(pathname) {
   return isMasterScreen(pathname) || pathname === '/imports'
-    || pathname === '/dashboard'
+    || pathname === '/dashboard' || pathname === '/reports'
     || inventoryScreen(pathname) || transactionScreen(pathname) || opnameScreen(pathname);
 }
 
@@ -114,6 +115,7 @@ async function servePublic(response, pathname) {
   else if (transactionScreen(pathname)) asset = ['transaction.html', 'text/html; charset=utf-8'];
   else if (opnameScreen(pathname)) asset = ['opname.html', 'text/html; charset=utf-8'];
   else if (pathname === '/dashboard') asset = ['dashboard.html', 'text/html; charset=utf-8'];
+  else if (pathname === '/reports') asset = ['reports.html', 'text/html; charset=utf-8'];
   if (!asset) return false;
   const body = await readFile(`${publicDirectory}${asset[0]}`);
   const htmlHeaders = asset[1].startsWith('text/html') ? {

@@ -19,9 +19,24 @@ test('dashboard screen is accessible and contains read-only cards and recent row
   assert.doesNotMatch(js, /innerHTML|localStorage|sessionStorage|document\.cookie|method:\s*['"]POST/i);
 });
 
-test('every authenticated shell links dashboard', async () => {
+test('reports screen keeps filters in URL and delegates CSV to streaming endpoint', async () => {
+  const html = await source('reports.html');
+  for (const id of ['report-type', 'filters', 'report-body', 'export-csv', 'screen-status']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  const js = await source('reports.js');
+  assert.match(js, /URLSearchParams/);
+  assert.match(js, /history\.replaceState/);
+  assert.match(js, /\/api\/reports\//);
+  assert.match(js, /\/export\?format=CSV/);
+  assert.match(js, /textContent/);
+  assert.doesNotMatch(js, /innerHTML|localStorage|sessionStorage|document\.cookie/);
+});
+
+test('every authenticated shell links dashboard and reports', async () => {
   for (const name of ['index.html', 'inventory.html', 'transaction.html', 'import.html', 'opname.html']) {
     const html = await source(name);
     assert.match(html, /href="\/dashboard"/, name);
+    assert.match(html, /href="\/reports"/, name);
   }
 });

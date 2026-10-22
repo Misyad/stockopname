@@ -3,6 +3,7 @@ import { authorize, CAPABILITIES } from '../http/middleware/rbac.js';
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const transactionTypes = new Set(['IN', 'OUT', 'OPENING', 'ADJUSTMENT', 'REVERSAL']);
 const productStatuses = new Set(['ACTIVE', 'INACTIVE', 'REVIEW']);
+const stockStatuses = new Set(['SAFE', 'LOW', 'OUT']);
 
 function fault(status, errorCode, message, details = {}) {
   return Object.assign(new Error(message), { status, errorCode, details });
@@ -64,20 +65,24 @@ function queryBuilder(regionId) {
     values,
     clauses,
     add(clause, value) {
+      if (!clause.includes('?')) {
+        clauses.push(clause);
+        return;
+      }
       values.push(value);
       clauses.push(clause.replaceAll('?', `$${values.length}`));
     },
   };
 }
 
-async function currentActor(pool, sessionActor) {
+async function currentActor(pool, sessionActor, capability = CAPABILITIES.STOCK_READ) {
   const result = await pool.query(
     "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE'",
     [sessionActor?.userId],
   );
   const row = result.rows[0];
   const actor = row ? { userId: row.id, role: row.role, regionId: row.region_id } : null;
-  authorize(actor, CAPABILITIES.STOCK_READ);
+  authorize(actor, capability);
   return actor;
 }
 
@@ -104,6 +109,7 @@ function transactionOptions(raw) {
     throw fault(400, 'VALIDATION_ERROR', 'Invalid type.');
   }
   options.product_id = uuid(options.product_id, 'product_id');
+  options.category_id = uuid(options.category_id, 'category_id');
   options.supplier_id = uuid(options.supplier_id, 'supplier_id');
   options.q = text(options.q, 'q');
   return options;
@@ -114,6 +120,7 @@ function transactionFilters(builder, options) {
   if (options.to) builder.add('transactions.transaction_date <= ?::date', options.to);
   if (options.type) builder.add('transactions.transaction_type = ?', options.type);
   if (options.product_id) builder.add('transactions.product_id = ?', options.product_id);
+  if (options.category_id) builder.add('products.category_id = ?', options.category_id);
   if (options.warehouse_id) builder.add('transactions.warehouse_id = ?', options.warehouse_id);
   if (options.supplier_id) builder.add('transactions.supplier_id = ?', options.supplier_id);
   if (options.q) builder.add(`(
@@ -141,6 +148,7 @@ function transactionItem(row) {
     warehouseName: row.warehouse_name,
     supplierId: row.supplier_id,
     supplierCode: row.supplier_code,
+    supplierName: row.supplier_name,
     batchId: row.batch_id,
     quantity: row.quantity_text,
     unit: row.unit,
@@ -176,11 +184,13 @@ const transactionSelect = `
     trim_scale(transactions.balance_after)::text AS balance_after_text,
     products.code AS product_code, products.name AS product_name,
     warehouses.code AS warehouse_code, warehouses.name AS warehouse_name,
-    suppliers.code AS supplier_code, users.name AS user_name
+    suppliers.code AS supplier_code, suppliers.name AS supplier_name, users.name AS user_name
 `;
 
-export async function listStock(pool, sessionActor, rawOptions = {}) {
-  const actor = await currentActor(pool, sessionActor);
+export async function listStock(
+  pool, sessionActor, rawOptions = {}, capability = CAPABILITIES.STOCK_READ,
+) {
+  const actor = await currentActor(pool, sessionActor, capability);
   const page = pagination(rawOptions);
   const options = {
     productId: uuid(rawOptions.product_id, 'product_id'),
@@ -189,14 +199,18 @@ export async function listStock(pool, sessionActor, rawOptions = {}) {
     status: text(rawOptions.status, 'status')?.toUpperCase() ?? null,
     q: text(rawOptions.q, 'q'),
   };
-  if (options.status && !productStatuses.has(options.status)) {
+  if (options.status && !productStatuses.has(options.status) && !stockStatuses.has(options.status)) {
     throw fault(400, 'VALIDATION_ERROR', 'Invalid status.');
   }
   const builder = queryBuilder(actor.regionId);
   if (options.productId) builder.add('balances.product_id = ?', options.productId);
   if (options.warehouseId) builder.add('balances.warehouse_id = ?', options.warehouseId);
   if (options.categoryId) builder.add('products.category_id = ?', options.categoryId);
-  if (options.status) builder.add('products.status = ?', options.status);
+  if (productStatuses.has(options.status)) builder.add('products.status = ?', options.status);
+  else if (options.status === 'SAFE') builder.add('balances.quantity > products.minimum_stock', null);
+  else if (options.status === 'LOW') {
+    builder.add('balances.quantity > 0 AND balances.quantity <= products.minimum_stock', null);
+  } else if (options.status === 'OUT') builder.add('balances.quantity = 0', null);
   if (options.q) builder.add(`(
     products.code ILIKE ? ESCAPE '\\' OR products.name ILIKE ? ESCAPE '\\'
     OR warehouses.code ILIKE ? ESCAPE '\\' OR warehouses.name ILIKE ? ESCAPE '\\'
@@ -246,8 +260,10 @@ export async function listStock(pool, sessionActor, rawOptions = {}) {
   return list(items, count.rows[0].total, page.page, page.limit);
 }
 
-export async function listTransactions(pool, sessionActor, rawOptions = {}) {
-  const actor = await currentActor(pool, sessionActor);
+export async function listTransactions(
+  pool, sessionActor, rawOptions = {}, capability = CAPABILITIES.STOCK_READ,
+) {
+  const actor = await currentActor(pool, sessionActor, capability);
   const page = pagination(rawOptions);
   const options = transactionOptions(rawOptions);
   options.warehouse_id = await warehouseFilter(pool, actor, rawOptions.warehouse_id);
@@ -269,8 +285,10 @@ export async function listTransactions(pool, sessionActor, rawOptions = {}) {
   );
 }
 
-export async function stockCard(pool, sessionActor, productId, rawOptions = {}) {
-  const actor = await currentActor(pool, sessionActor);
+export async function stockCard(
+  pool, sessionActor, productId, rawOptions = {}, capability = CAPABILITIES.STOCK_READ,
+) {
+  const actor = await currentActor(pool, sessionActor, capability);
   const page = pagination(rawOptions);
   const options = transactionOptions({ ...rawOptions, product_id: productId });
   options.warehouse_id = await warehouseFilter(pool, actor, rawOptions.warehouse_id);

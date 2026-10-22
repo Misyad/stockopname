@@ -3,6 +3,7 @@ import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { dashboard } from '../services/dashboard.js';
+import { exportReportCsv, listReport } from '../services/reports.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { confirmImport, previewImport } from '../services/import.js';
 import {
@@ -172,14 +173,26 @@ export async function handleInventoryReadRoute({ request, response, pool, json, 
 
 export async function handleReportingRoute({ request, response, pool, json, failure }) {
   if (request.method !== 'GET') return false;
-  const path = new URL(request.url, 'http://localhost').pathname;
-  if (path !== '/api/dashboard') return false;
+  const url = new URL(request.url, 'http://localhost');
+  const reportMatch = url.pathname.match(/^\/api\/reports\/([A-Z_]+)(\/export)?$/i);
+  if (url.pathname !== '/api/dashboard' && !reportMatch) return false;
   const actor = await authenticate(pool, request);
   if (!actor) {
     failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
     return true;
   }
-  json(response, 200, { success: true, data: await dashboard(pool, actor), message: 'OK' });
+  const query = Object.fromEntries(url.searchParams);
+  if (url.pathname === '/api/dashboard') {
+    json(response, 200, { success: true, data: await dashboard(pool, actor), message: 'OK' });
+  } else if (reportMatch[2]) {
+    await exportReportCsv(pool, actor, reportMatch[1], query, response);
+  } else {
+    json(response, 200, {
+      success: true,
+      data: await listReport(pool, actor, reportMatch[1], query),
+      message: 'OK',
+    });
+  }
   return true;
 }
 
