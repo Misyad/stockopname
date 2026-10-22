@@ -1,4 +1,21 @@
 services:
+  backup-init:
+    image: alpine:3.22
+    command: ["sh", "-c", "chown 1000:1000 /backup /backup-copy && chmod 0700 /backup /backup-copy"]
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    volumes:
+      - ${BACKUP_LOCAL_HOST_DIR:-./backups}:/backup
+      - ${BACKUP_COPY_HOST_DIR:-./backup-copy}:/backup-copy
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+
   app:
     build:
       context: .
@@ -15,6 +32,8 @@ services:
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
     depends_on:
+      backup-init:
+        condition: service_completed_successfully
       database:
         condition: service_healthy
     restart: unless-stopped
@@ -24,6 +43,7 @@ services:
     volumes:
       - ${BACKUP_LOCAL_HOST_DIR:-./backups}:/var/backups/stock-opname
       - ${BACKUP_COPY_HOST_DIR:-./backup-copy}:/var/backups/stock-opname-copy
+      - ${SECRETS_HOST_DIR:-./secrets}:/run/secrets:ro
     cap_drop:
       - ALL
     security_opt:

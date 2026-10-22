@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer as createTcpServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -48,6 +50,7 @@ test('Compose starts healthy non-root app and internal PostgreSQL', { timeout: 2
   assert.ok(existsSync(composeFile), 'compose.yaml must exist');
 
   const port = await reservePort();
+  const backupRoot = mkdtempSync(join(tmpdir(), 'stock-opname-docker-'));
   const env = {
     ...process.env,
     APP_PORT: String(port),
@@ -55,12 +58,20 @@ test('Compose starts healthy non-root app and internal PostgreSQL', { timeout: 2
     POSTGRES_DB: 'stock_opname_test',
     POSTGRES_USER: 'stock_opname_test',
     POSTGRES_PASSWORD: randomBytes(24).toString('base64url'),
+    BACKUP_LOCAL_HOST_DIR: `${backupRoot}/local`,
+    BACKUP_COPY_HOST_DIR: `${backupRoot}/copy`,
+    SECRETS_HOST_DIR: backupRoot,
+    GOOGLE_APPLICATION_CREDENTIALS: '/run/secrets/google-drive.json',
   };
 
   const config = JSON.parse(compose(['config', '--format', 'json'], env));
-  assert.deepEqual(Object.keys(config.services).sort(), ['app', 'database']);
+  assert.deepEqual(Object.keys(config.services).sort(), ['app', 'backup-init', 'database']);
   assert.ok(!config.services.database.ports?.length, 'PostgreSQL must not publish a host port');
   assert.ok(config.volumes?.postgres_data, 'PostgreSQL must use named persistent volume');
+  assert.equal(config.services.app.environment.GOOGLE_APPLICATION_CREDENTIALS, '/run/secrets/google-drive.json');
+  assert.ok(config.services.app.volumes.some(
+    (mount) => mount.target === '/run/secrets' && mount.read_only,
+  ), 'Google credential directory must be mounted read-only');
 
   try {
     compose(['up', '-d', '--build', '--wait', '--wait-timeout', '180'], env);
@@ -81,6 +92,10 @@ test('Compose starts healthy non-root app and internal PostgreSQL', { timeout: 2
     }
 
     assert.notEqual(compose(['exec', '-T', 'app', 'id', '-u'], env).trim(), '0', 'App must run non-root');
+    compose(['exec', '-T', 'app', 'sh', '-c', [
+      'touch /var/backups/stock-opname/write-check',
+      'touch /var/backups/stock-opname-copy/write-check',
+    ].join(' && ')], env);
     assert.match(
       compose(['exec', '-T', 'database', 'pg_isready', '-U', env.POSTGRES_USER, '-d', env.POSTGRES_DB], env),
       /accepting connections/,
@@ -97,5 +112,6 @@ test('Compose starts healthy non-root app and internal PostgreSQL', { timeout: 2
       env,
       encoding: 'utf8',
     });
+    rmSync(backupRoot, { recursive: true, force: true });
   }
 });

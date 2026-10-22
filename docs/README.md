@@ -126,6 +126,7 @@ APP_ORIGIN=https://stock.example.invalid
 TRUST_PROXY=false
 BACKUP_LOCAL_DIR=/var/backups/stock-opname
 GOOGLE_DRIVE_FOLDER_ID=CHANGE_ME
+SECRETS_HOST_DIR=./secrets
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/google-drive.json
 LOG_LEVEL=info
 ```
@@ -209,7 +210,7 @@ pnpm backup
 pnpm restore:verify -- <backup-file>
 ```
 
-Backup requires `BACKUP_ACTOR_ID`. Restore verification accepts only files inside `BACKUP_LOCAL_DIR` and always restores into an isolated temporary database.
+Backup requires `BACKUP_ACTOR_ID`. Put Google service-account JSON at `${SECRETS_HOST_DIR}/google-drive.json`; Compose mounts this directory read-only. Restore verification accepts only files inside `BACKUP_LOCAL_DIR` and always restores into an isolated temporary database.
 
 Production restore, retention cleanup, volume deletion, and DB reset require explicit approval. Never use `docker compose down -v` on retained data.
 
