@@ -82,12 +82,12 @@ function cleanup(env) {
 
 const typeNames = {
   b: 'bigint', d: 'date', i: 'integer', j: 'jsonb', n: 'numeric',
-  t: 'text', u: 'uuid', v: 'character varying', z: 'timestamp with time zone',
+  o: 'boolean', t: 'text', u: 'uuid', v: 'character varying', z: 'timestamp with time zone',
 };
 const schemaContract = {
   audit_logs: 'id:u! timestamp:z! user_id:u action:v! module:v! reference:v details:j!={}',
   auth_sessions: 'id:u! user_id:u! reference:v! secret_hash:v! csrf_secret_hash:v! expires_at:z! last_seen_at:z revoked_at:z created_at:z!',
-  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z',
+  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z independent_storage_uri:t restore_duration_ms:b failure_code:v retained:o!=true pinned:o!=false',
   categories: 'id:u! code:v! name:v! status:v created_at:z updated_at:z',
   import_batches: 'id:u! import_type:v file_name:v! file_hash:v! preview_version:b!=1 status:v row_count:i!=0 created_by:u! created_at:z! confirmed_at:z confirmation_key:v confirmation_hash:v confirmed_by:u',
   products: 'id:u! code:v! barcode:v name:v! category_id:u! base_unit_id:u! purchase_unit_id:u conversion_factor:n! minimum_stock:n!=0 maximum_stock:n!=0 photo_url:t status:v created_at:z updated_at:z',
@@ -109,7 +109,7 @@ const schemaContract = {
 const expectedDefinitions = new Map();
 const expectedColumns = new Map(Object.entries(schemaContract).map(([table, contract]) => {
   const columns = contract.split(' ').map((entry) => {
-    const [, column, type, required, defaultValue] = entry.match(/^(\w+):([bdijntuvz])(!)?(?:=(.*))?$/);
+    const [, column, type, required, defaultValue] = entry.match(/^(\w+):([bdijnotuvz])(!)?(?:=(.*))?$/);
     expectedDefinitions.set(`${table}.${column}`, {
       type: typeNames[type], nullable: required ? 'NO' : 'YES', defaultValue: defaultValue ?? '',
     });
@@ -376,9 +376,10 @@ test('DB-001 schema has every required index path', () => {
     SELECT indexname || '|' || indexdef
     FROM pg_indexes
     WHERE schemaname = 'public'
-      AND indexname IN ('stock_batches_fefo_active_idx', 'stock_transactions_out_allocation_unique')
+      AND indexname IN ('backup_logs_verified_retained_idx', 'stock_batches_fefo_active_idx', 'stock_transactions_out_allocation_unique')
     ORDER BY indexname
   `, env);
+  assert.match(stockOutIndexes, /backup_logs_verified_retained_idx\|.*\(verified_at DESC\).*WHERE .*status.*VERIFIED.*retained/);
   assert.match(stockOutIndexes, /stock_batches_fefo_active_idx\|.*\(product_id, warehouse_id, expiry_date, production_date, created_at, id\).*WHERE .*ACTIVE.*quantity.*0/);
   assert.match(stockOutIndexes, /stock_transactions_out_allocation_unique\|.*UNIQUE.*\(stock_out_request_id, allocation_index\).*WHERE .*stock_out_request_id IS NOT NULL/);
 });

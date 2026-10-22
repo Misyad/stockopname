@@ -1,5 +1,6 @@
 FROM node:22-alpine
-
+RUN apk add --no-cache postgresql17-client rclone \
+  && install -d -o node -g node -m 700 /var/backups/stock-opname
 ENV NODE_ENV=production
 WORKDIR /app
 
@@ -10,7 +11,7 @@ RUN corepack enable \
 
 COPY --chown=node:node src ./src
 COPY --chown=node:node db/migrations ./db/migrations
-COPY --chown=node:node scripts/health-check.js ./scripts/health-check.js
+COPY --chown=node:node scripts/health-check.js scripts/backup.js scripts/restore.js scripts/retention.js ./scripts/
 
 USER node
 EXPOSE 3000

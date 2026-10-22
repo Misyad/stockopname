@@ -7,7 +7,13 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:-}
       APP_ORIGIN: ${APP_ORIGIN:-}
+      BACKUP_LOCAL_DIR: /var/backups/stock-opname
+      BACKUP_REMOTE: ${BACKUP_REMOTE:-}
+      RCLONE_CONFIG_BACKUP_TYPE: ${RCLONE_CONFIG_BACKUP_TYPE:-}
+      RCLONE_CONFIG_BACKUP_ROOT_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+      RCLONE_CONFIG_BACKUP_SERVICE_ACCOUNT_FILE: /run/secrets/google-drive.json
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
     depends_on:
@@ -15,6 +21,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
     read_only: true
+    volumes:
+      - backup_local:/var/backups/stock-opname
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/run/secrets/google-drive.json:ro
     tmpfs:
       - /tmp:mode=1777
     cap_drop:
@@ -50,3 +59,4 @@ services:
 
 volumes:
   postgres_data:
+  backup_local:

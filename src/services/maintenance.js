@@ -195,7 +195,7 @@ const auditSql = `
 async function verifiedBackupCheck(pool) {
   const row = (await pool.query(`
     SELECT verified_at, extract(epoch FROM (now() - verified_at)) / 3600 AS age_hours
-    FROM backup_logs WHERE status = 'VERIFIED' AND verified_at IS NOT NULL
+    FROM backup_logs WHERE status = 'VERIFIED' AND retained AND verified_at IS NOT NULL
     ORDER BY verified_at DESC LIMIT 1
   `)).rows[0];
   const ageHours = row ? Number(row.age_hours) : null;

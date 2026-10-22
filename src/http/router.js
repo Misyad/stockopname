@@ -1,9 +1,11 @@
 import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
+import { authorize, CAPABILITIES } from './middleware/rbac.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { dashboard } from '../services/dashboard.js';
 import { exportReportCsv, listReport } from '../services/reports.js';
+import { createBackup, listBackups } from '../services/backup.js';
 import { detailedHealth } from '../services/maintenance.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { confirmImport, previewImport } from '../services/import.js';
@@ -197,15 +199,43 @@ export async function handleReportingRoute({ request, response, pool, json, fail
   return true;
 }
 
-export async function handleMaintenanceRoute({ request, response, pool, json, failure }) {
+export async function handleMaintenanceRoute({
+  request, response, pool, appOrigin, json, failure, readJson,
+}) {
   const path = new URL(request.url, 'http://localhost').pathname;
-  if (request.method !== 'GET' || path !== '/api/maintenance/health-check') return false;
+  const health = request.method === 'GET' && path === '/api/maintenance/health-check';
+  const list = request.method === 'GET' && path === '/api/maintenance/backups';
+  const backup = request.method === 'POST' && path === '/api/maintenance/backup';
+  if (!health && !list && !backup) return false;
   const actor = await authenticate(pool, request);
   if (!actor) {
     failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
     return true;
   }
-  json(response, 200, { success: true, data: await detailedHealth(pool, actor), message: 'OK' });
+  if (backup) {
+    authorize(actor, CAPABILITIES.BACKUP);
+    if (!validOrigin(request, appOrigin)) {
+      failure(response, 403, 'ORIGIN_INVALID', 'Origin is not allowed.');
+      return true;
+    }
+    if (!await validCsrf(pool, sessionSecret(request), request.headers['x-csrf-token'])) {
+      failure(response, 403, 'CSRF_INVALID', 'CSRF token is invalid.');
+      return true;
+    }
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+      failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
+      return true;
+    }
+    const body = await readJson(request);
+    if (Object.keys(body).length) {
+      failure(response, 400, 'VALIDATION_ERROR', 'Maintenance request must be empty.');
+      return true;
+    }
+  }
+  const data = health
+    ? await detailedHealth(pool, actor)
+    : list ? await listBackups(pool, actor) : await createBackup(pool, actor);
+  json(response, 200, { success: true, data, message: 'OK' });
   return true;
 }
 

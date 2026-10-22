@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomBytes, scryptSync } from 'node:crypto';
 import { createServer as createTcpServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,20 @@ export function appCommand(args, environment = {}) {
   return compose(['exec', '-T', ...variables, 'app', ...args]);
 }
 
+export function appCommandResult(args, environment = {}) {
+  const variables = Object.entries(environment).flatMap(([name, value]) => ['-e', `${name}=${value}`]);
+  return spawnSync('docker', ['compose', '-f', composeFile, 'exec', '-T', ...variables, 'app', ...args], {
+    cwd: root, env, encoding: 'utf8',
+  });
+}
+
+export function appProcess(args, environment = {}) {
+  const variables = Object.entries(environment).flatMap(([name, value]) => ['-e', `${name}=${value}`]);
+  return spawn('docker', ['compose', '-f', composeFile, 'exec', '-T', ...variables, 'app', ...args], {
+    cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 export function sql(statement) {
   return compose([
     'exec', '-T', 'database', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-At',
@@ -75,6 +89,10 @@ export async function api(path, options = {}) {
   return { response, body };
 }
 
+export function appOrigin() {
+  return env.APP_ORIGIN;
+}
+
 export async function publicApi(path, options = {}) {
   const response = await fetch(`http://127.0.0.1:${env.APP_PORT}${path}`, options);
   const contentType = response.headers.get('content-type') || '';
@@ -106,6 +124,8 @@ export async function setup(name) {
     POSTGRES_PASSWORD: postgresPassword,
     DATABASE_URL: databaseUrl,
     DATABASE_ADMIN_URL: databaseUrl,
+    BACKUP_REMOTE: 'backup:/var/backups/stock-opname/remote',
+    RCLONE_CONFIG_BACKUP_TYPE: 'local',
   };
   compose(['up', '-d', '--build', '--wait', '--wait-timeout', '180']);
   compose(['exec', '-T', 'app', 'node', 'src/db/migrate.js']);
