@@ -21,7 +21,7 @@ test('master shell links to import preview', async () => {
   assert.match(html, /<a[^>]+href="\/imports"[^>]*>Import<\/a>/i);
 });
 
-test('import UI is semantic preview-only workflow', async () => {
+test('import UI exposes semantic confirm control after preview', async () => {
   const [html, styles] = await Promise.all([
     readFile(new URL('../../src/public/import.html', import.meta.url), 'utf8'),
     readFile(new URL('../../src/public/styles.css', import.meta.url), 'utf8'),
@@ -35,7 +35,8 @@ test('import UI is semantic preview-only workflow', async () => {
   assert.match(html, /type="file"[^>]+accept="\.csv,text\/csv"/i);
   assert.match(html, /id="preview-status"[^>]+role="status"[^>]+aria-live="polite"/i);
   assert.match(html, /id="preview-errors"[^>]+role="alert"/i);
-  assert.doesNotMatch(html, /Konfirmasi|Confirm|\/confirm/i);
+  assert.match(html, /<button[^>]+id="confirm-button"[^>]+type="button"[^>]+hidden[^>]*>Konfirmasi import<\/button>/i);
+  assert.match(html, /Konfirmasi hanya tersedia untuk Barang masuk READY/i);
 });
 
 test('import client hashes exact UTF-8 content and renders untrusted values safely', async () => {
@@ -55,14 +56,18 @@ test('import client hashes exact UTF-8 content and renders untrusted values safe
   assert.equal(body.children[0].children[1].textContent, 'code: <img src=x onerror=alert(1)>');
 });
 
-test('import client uses authenticated CSRF preview API without credential persistence or confirm', async () => {
+test('import client confirms READY STOCKIN using stable key, CSRF, and explicit warning', async () => {
   const source = await readFile(new URL('../../src/public/import.js', import.meta.url), 'utf8');
   assert.match(source, /\/api\/auth\/me/);
   assert.match(source, /\/api\/auth\/csrf/);
   assert.match(source, /\/api\/imports\/preview/);
+  assert.match(source, /\/api\/imports\/\$\{preview\.batchId\}\/confirm/);
+  assert.match(source, /idempotencyKey:\s*`import:\$\{preview\.batchId\}:\$\{preview\.previewVersion\}`/);
+  assert.match(source, /preview\.type\s*===\s*['"]STOCKIN['"].*preview\.status\s*===\s*['"]READY['"]/s);
+  assert.match(source, /confirm\([^)]*stok/i);
   assert.match(source, /x-csrf-token/);
   assert.match(source, /crypto\.subtle\.digest/);
   assert.match(source, /role\s*!==\s*['"]ADMIN['"]/);
   assert.match(source, /textContent/);
-  assert.doesNotMatch(source, /innerHTML|localStorage|sessionStorage|\/confirm/);
+  assert.doesNotMatch(source, /innerHTML|localStorage|sessionStorage/);
 });

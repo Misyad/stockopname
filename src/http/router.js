@@ -3,7 +3,7 @@ import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
-import { previewImport } from '../services/import.js';
+import { confirmImport, previewImport } from '../services/import.js';
 import {
   approveOpname, createOpname, getOpname, listOpnames, rejectOpname,
   saveOpnameCounts, startOpname, submitOpname,
@@ -64,7 +64,9 @@ export async function handleImportRoute({
   request, response, pool, appOrigin, json, failure, readJson,
 }) {
   const path = new URL(request.url, 'http://localhost').pathname;
-  if (request.method !== 'POST' || path !== '/api/imports/preview') return false;
+  const confirmMatch = path.match(/^\/api\/imports\/([0-9a-f-]+)\/confirm$/i);
+  const isPreview = path === '/api/imports/preview';
+  if (request.method !== 'POST' || (!isPreview && !confirmMatch)) return false;
   const actor = await authenticate(pool, request);
   if (!actor) {
     failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
@@ -87,13 +89,15 @@ export async function handleImportRoute({
     failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
     return true;
   }
-  const body = await readJson(request, {
+  const body = await readJson(request, isPreview ? {
     maxBytes: 1_100_000,
     errorCode: 'IMPORT_FILE_TOO_LARGE',
     sizeMessage: 'CSV exceeds 1 MiB.',
-  });
-  const data = await previewImport(pool, actor, body);
-  json(response, 201, { success: true, data, message: 'OK' });
+  } : undefined);
+  const data = isPreview
+    ? await previewImport(pool, actor, body)
+    : await confirmImport(pool, actor, confirmMatch[1], body);
+  json(response, isPreview ? 201 : 200, { success: true, data, message: 'OK' });
   return true;
 }
 

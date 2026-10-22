@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { authorize, CAPABILITIES } from '../http/middleware/rbac.js';
-import { runInventoryMutation, runStockOutMutation } from './inventory.js';
+import {
+  runInventoryMutation, runInventoryMutationInTransaction, runStockOutMutation,
+} from './inventory.js';
 
 const openingFields = new Set([
   'idempotencyKey', 'date', 'reference', 'warehouse', 'code', 'batch',
@@ -245,82 +247,94 @@ export async function createOpeningStock(pool, sessionActor, rawInput) {
   return response(transaction);
 }
 
+async function prepareStockIn(client, sessionActor, input) {
+  const actorResult = await client.query(
+    "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE' FOR SHARE",
+    [sessionActor?.userId],
+  );
+  const actorRow = actorResult.rows[0];
+  if (!actorRow) throw fault(401, 'UNAUTHENTICATED', 'Authentication required.');
+  authorize({ userId: actorRow.id, role: actorRow.role }, CAPABILITIES.STOCK_MOVE);
+
+  const product = await activeReference(client, 'products', input.code, 'INVALID_PRODUCT', true);
+  const warehouse = await activeReference(
+    client, 'warehouses', input.warehouse, 'INVALID_WAREHOUSE', true,
+  );
+  if (actorRow.region_id !== warehouse.region_id) {
+    throw fault(403, 'REGION_FORBIDDEN', 'Warehouse is outside the user region.');
+  }
+  const unit = await resolveUnit(client, input.unit, true);
+  const supplier = input.supplier
+    ? await activeReference(client, 'suppliers', input.supplier, 'INVALID_SUPPLIER', true) : null;
+  let factor;
+  if (unit.id === product.base_unit_id) factor = '1';
+  else if (unit.id === product.purchase_unit_id) factor = product.conversion_factor;
+  else throw fault(422, 'INVALID_UNIT', 'Unit is not valid for this product.');
+
+  const quantities = await client.query(
+    'SELECT trim_scale($1::numeric * $2::numeric)::text AS quantity, trim_scale($3::numeric)::text AS price',
+    [input.quantity, factor, input.price],
+  );
+  const baseQuantity = quantities.rows[0].quantity;
+  const price = quantities.rows[0].price;
+  const canonical = JSON.stringify({
+    type: 'IN', date: input.date, reference: input.reference,
+    warehouseId: warehouse.id, productId: product.id, supplierId: supplier?.id ?? null,
+    batch: input.batch, productionDate: input.productionDate, expiry: input.expiry,
+    quantity: baseQuantity, unitId: product.base_unit_id, price, notes: input.notes,
+  });
+  const requestHash = createHash('sha256').update(canonical).digest('hex');
+  const transactionId = randomUUID();
+  return {
+    mode: 'INCREMENT', requestHash, productId: product.id, warehouseId: warehouse.id,
+    validateCurrentState: () => {
+      if (product.status !== 'ACTIVE' || product.category_status !== 'ACTIVE'
+          || product.base_unit_status !== 'ACTIVE'
+          || (product.purchase_unit_id && product.purchase_unit_status !== 'ACTIVE')) {
+        throw fault(422, 'INVALID_PRODUCT', 'product is not active or does not exist.');
+      }
+      if (warehouse.status !== 'ACTIVE') {
+        throw fault(422, 'INVALID_WAREHOUSE', 'warehouse is not active or does not exist.');
+      }
+      if (unit.status !== 'ACTIVE' || (unit.alias_status && unit.alias_status !== 'ACTIVE')) {
+        throw fault(422, 'INVALID_UNIT', 'Unit is not active or does not exist.');
+      }
+      if (supplier && supplier.status !== 'ACTIVE') {
+        throw fault(422, 'INVALID_SUPPLIER', 'supplier is not active or does not exist.');
+      }
+    },
+    batch: {
+      productId: product.id, warehouseId: warehouse.id, batchNumber: input.batch,
+      productionDate: input.productionDate, expiryDate: input.expiry,
+      quantity: baseQuantity, unit: product.base_unit_code, purchasePrice: price,
+    },
+    balance: { productId: product.id, warehouseId: warehouse.id, quantity: baseQuantity },
+    transaction: {
+      id: transactionId, transactionNumber: `IN-${transactionId}`, transactionType: 'IN',
+      transactionDate: input.date, referenceId: input.reference, supplierId: supplier?.id ?? null,
+      quantity: baseQuantity, unit: product.base_unit_code, reason: input.notes, userId: actorRow.id,
+    },
+    auditAction: 'STOCK_IN',
+    auditDetails: {
+      productId: product.id, warehouseId: warehouse.id, supplierId: supplier?.id ?? null,
+      quantity: baseQuantity, purchasePrice: price,
+    },
+  };
+}
+
 export async function createStockIn(pool, sessionActor, rawInput) {
   const input = normalize(rawInput, 'IN');
-  const transaction = await runInventoryMutation(pool, input.idempotencyKey, async (client) => {
-    const actorResult = await client.query(
-      "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE' FOR SHARE",
-      [sessionActor?.userId],
-    );
-    const actorRow = actorResult.rows[0];
-    if (!actorRow) throw fault(401, 'UNAUTHENTICATED', 'Authentication required.');
-    authorize({ userId: actorRow.id, role: actorRow.role }, CAPABILITIES.STOCK_MOVE);
+  const transaction = await runInventoryMutation(
+    pool, input.idempotencyKey, (client) => prepareStockIn(client, sessionActor, input),
+  );
+  return response(transaction);
+}
 
-    const product = await activeReference(client, 'products', input.code, 'INVALID_PRODUCT', true);
-    const warehouse = await activeReference(
-      client, 'warehouses', input.warehouse, 'INVALID_WAREHOUSE', true,
-    );
-    if (actorRow.region_id !== warehouse.region_id) {
-      throw fault(403, 'REGION_FORBIDDEN', 'Warehouse is outside the user region.');
-    }
-    const unit = await resolveUnit(client, input.unit, true);
-    const supplier = input.supplier
-      ? await activeReference(client, 'suppliers', input.supplier, 'INVALID_SUPPLIER', true) : null;
-    let factor;
-    if (unit.id === product.base_unit_id) factor = '1';
-    else if (unit.id === product.purchase_unit_id) factor = product.conversion_factor;
-    else throw fault(422, 'INVALID_UNIT', 'Unit is not valid for this product.');
-
-    const quantities = await client.query(
-      'SELECT trim_scale($1::numeric * $2::numeric)::text AS quantity, trim_scale($3::numeric)::text AS price',
-      [input.quantity, factor, input.price],
-    );
-    const baseQuantity = quantities.rows[0].quantity;
-    const price = quantities.rows[0].price;
-    const canonical = JSON.stringify({
-      type: 'IN', date: input.date, reference: input.reference,
-      warehouseId: warehouse.id, productId: product.id, supplierId: supplier?.id ?? null,
-      batch: input.batch, productionDate: input.productionDate, expiry: input.expiry,
-      quantity: baseQuantity, unitId: product.base_unit_id, price, notes: input.notes,
-    });
-    const requestHash = createHash('sha256').update(canonical).digest('hex');
-    const transactionId = randomUUID();
-    return {
-      mode: 'INCREMENT', requestHash, productId: product.id, warehouseId: warehouse.id,
-      validateCurrentState: () => {
-        if (product.status !== 'ACTIVE' || product.category_status !== 'ACTIVE'
-            || product.base_unit_status !== 'ACTIVE'
-            || (product.purchase_unit_id && product.purchase_unit_status !== 'ACTIVE')) {
-          throw fault(422, 'INVALID_PRODUCT', 'product is not active or does not exist.');
-        }
-        if (warehouse.status !== 'ACTIVE') {
-          throw fault(422, 'INVALID_WAREHOUSE', 'warehouse is not active or does not exist.');
-        }
-        if (unit.status !== 'ACTIVE' || (unit.alias_status && unit.alias_status !== 'ACTIVE')) {
-          throw fault(422, 'INVALID_UNIT', 'Unit is not active or does not exist.');
-        }
-        if (supplier && supplier.status !== 'ACTIVE') {
-          throw fault(422, 'INVALID_SUPPLIER', 'supplier is not active or does not exist.');
-        }
-      },
-      batch: {
-        productId: product.id, warehouseId: warehouse.id, batchNumber: input.batch,
-        productionDate: input.productionDate, expiryDate: input.expiry,
-        quantity: baseQuantity, unit: product.base_unit_code, purchasePrice: price,
-      },
-      balance: { productId: product.id, warehouseId: warehouse.id, quantity: baseQuantity },
-      transaction: {
-        id: transactionId, transactionNumber: `IN-${transactionId}`, transactionType: 'IN',
-        transactionDate: input.date, referenceId: input.reference, supplierId: supplier?.id ?? null,
-        quantity: baseQuantity, unit: product.base_unit_code, reason: input.notes, userId: actorRow.id,
-      },
-      auditAction: 'STOCK_IN',
-      auditDetails: {
-        productId: product.id, warehouseId: warehouse.id, supplierId: supplier?.id ?? null,
-        quantity: baseQuantity, purchasePrice: price,
-      },
-    };
-  });
+export async function createStockInInTransaction(client, sessionActor, rawInput) {
+  const input = normalize(rawInput, 'IN');
+  const transaction = await runInventoryMutationInTransaction(
+    client, input.idempotencyKey, () => prepareStockIn(client, sessionActor, input),
+  );
   return response(transaction);
 }
 

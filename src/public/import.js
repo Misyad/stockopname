@@ -36,7 +36,9 @@ if (typeof document !== 'undefined') {
   const errors = document.querySelector('#preview-errors');
   const results = document.querySelector('#preview-results');
   const button = document.querySelector('#preview-button');
+  const confirmButton = document.querySelector('#confirm-button');
   let csrfToken;
+  let preview;
 
   async function api(path, options = {}) {
     const response = await fetch(path, { credentials: 'same-origin', ...options });
@@ -68,6 +70,8 @@ if (typeof document !== 'undefined') {
     if (!file) return;
     errors.hidden = true;
     results.hidden = true;
+    confirmButton.hidden = true;
+    preview = undefined;
     if (file.size > MAX_BYTES) {
       errors.textContent = 'CSV melebihi 1 MiB.';
       errors.hidden = false;
@@ -87,12 +91,14 @@ if (typeof document !== 'undefined') {
           content,
         }),
       });
+      preview = { ...data, type: document.querySelector('#import-type').value };
       renderPreview(document, document.querySelector('#preview-body'), data.rows);
       document.querySelector('#preview-summary').textContent = [
         `${data.rowCount} baris`, `${data.readyCount} siap`,
         `${data.reviewCount} review`, `${data.rejectedCount} ditolak`,
       ].join(' · ');
       results.hidden = false;
+      confirmButton.hidden = !(preview.type === 'STOCKIN' && preview.status === 'READY');
       status.textContent = `Preview ${data.status}. Tidak ada perubahan stok.`;
     } catch (cause) {
       errors.textContent = cause instanceof TypeError
@@ -102,6 +108,35 @@ if (typeof document !== 'undefined') {
       status.textContent = '';
     } finally {
       button.disabled = false;
+    }
+  });
+
+  confirmButton.addEventListener('click', async () => {
+    if (!preview || preview.type !== 'STOCKIN' || preview.status !== 'READY') return;
+    if (!window.confirm('Konfirmasi import akan menambah stok. Lanjutkan?')) return;
+    confirmButton.disabled = true;
+    errors.hidden = true;
+    status.textContent = 'Mengimpor stok…';
+    try {
+      const data = await api(`/api/imports/${preview.batchId}/confirm`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({
+          previewVersion: preview.previewVersion,
+          idempotencyKey: `import:${preview.batchId}:${preview.previewVersion}`,
+        }),
+      });
+      preview = { ...preview, status: data.status };
+      confirmButton.hidden = true;
+      status.textContent = `${data.importedCount} baris berhasil diimpor.`;
+    } catch (cause) {
+      errors.textContent = cause instanceof TypeError
+        ? 'Hasil belum diketahui. Periksa stok lalu coba lagi; permintaan memakai kunci yang sama.'
+        : cause.message;
+      errors.hidden = false;
+      status.textContent = '';
+    } finally {
+      confirmButton.disabled = false;
     }
   });
 
