@@ -107,6 +107,10 @@ test('Compose starts healthy non-root app and internal PostgreSQL', { timeout: 2
     const mounts = JSON.parse(output('docker', ['inspect', '--format', '{{json .Mounts}}', databaseId]));
     assert.ok(mounts.some((mount) => mount.Type === 'volume' && mount.Destination === '/var/lib/postgresql/data'));
   } finally {
+    spawnSync('docker', [
+      'compose', '-f', composeFile, 'run', '--rm', '--no-deps', '--entrypoint', 'sh',
+      'backup-init', '-c', 'chmod 0777 /backup /backup-copy',
+    ], { cwd: projectRoot, env, encoding: 'utf8' });
     spawnSync('docker', ['compose', '-f', composeFile, 'down', '-v', '--remove-orphans'], {
       cwd: projectRoot,
       env,

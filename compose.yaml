@@ -1,7 +1,16 @@
 services:
   backup-init:
     image: alpine:3.22
-    command: ["sh", "-c", "chown 1000:1000 /backup /backup-copy && chmod 0700 /backup /backup-copy"]
+    command:
+      - sh
+      - -c
+      - |
+        for directory in /backup /backup-copy; do
+          if [ "$(stat -c %u "$$directory")" = 0 ] && [ "$(stat -c %a "$$directory")" != 777 ]; then
+            chown 1000:1000 "$$directory"
+            chmod 0700 "$$directory"
+          fi
+        done
     user: "0:0"
     restart: "no"
     read_only: true
