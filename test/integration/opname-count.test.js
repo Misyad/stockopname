@@ -309,3 +309,29 @@ test('warehouse scope rejects cross-region detail and every Phase 6.1 mutation f
   }
   assert.equal(sql(`SELECT status FROM stock_opnames WHERE id = '${opnameId}'`), 'DRAFT');
 });
+
+test('opname list is paginated, filtered, blind, and region-scoped for every role', async () => {
+  for (const session of [sessions.admin, sessions.supervisor, sessions.petugas]) {
+    const listed = await api('/opnames?status=DRAFT&page=1&limit=25', authenticated(session));
+    assert.equal(listed.response.status, 200, JSON.stringify(listed.body));
+    assert.equal(listed.body.data.page, 1);
+    assert.equal(listed.body.data.limit, 25);
+    assert.equal(listed.body.data.items.length > 0, true);
+    assert.equal(listed.body.data.items.every((item) => item.warehouseId === ids.warehouseA), true);
+    assert.equal(listed.body.data.items.some((item) => item.opnameNumber === 'OP-REGION-B'), false);
+    assert.equal(JSON.stringify(listed.body).includes('systemQuantity'), false);
+  }
+
+  const searched = await api('/opnames?q=Shift%20count', authenticated(sessions.petugas));
+  assert.equal(searched.response.status, 200, JSON.stringify(searched.body));
+  assert.equal(searched.body.data.items.some((item) => item.notes === 'Shift count'), true);
+
+  for (const path of [
+    '/opnames?limit=101',
+    '/opnames?status=UNKNOWN',
+    `/opnames?warehouse_id=${ids.warehouseB}`,
+  ]) {
+    const result = await api(path, authenticated(sessions.admin));
+    assert.equal(result.response.status, path.includes('warehouse_id') ? 403 : 400, JSON.stringify(result.body));
+  }
+});

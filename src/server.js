@@ -94,9 +94,13 @@ function transactionScreen(pathname) {
   return /^\/transactions\/(opening|in|out)$/.test(pathname);
 }
 
+function opnameScreen(pathname) {
+  return pathname === '/opnames' || /^\/opnames\/[0-9a-f-]+$/i.test(pathname);
+}
+
 function isAuthenticatedScreen(pathname) {
   return isMasterScreen(pathname) || pathname === '/imports'
-    || inventoryScreen(pathname) || transactionScreen(pathname);
+    || inventoryScreen(pathname) || transactionScreen(pathname) || opnameScreen(pathname);
 }
 
 async function servePublic(response, pathname) {
@@ -105,6 +109,7 @@ async function servePublic(response, pathname) {
   else if (pathname === '/imports') asset = ['import.html', 'text/html; charset=utf-8'];
   else if (inventoryScreen(pathname)) asset = ['inventory.html', 'text/html; charset=utf-8'];
   else if (transactionScreen(pathname)) asset = ['transaction.html', 'text/html; charset=utf-8'];
+  else if (opnameScreen(pathname)) asset = ['opname.html', 'text/html; charset=utf-8'];
   if (!asset) return false;
   const body = await readFile(`${publicDirectory}${asset[0]}`);
   const htmlHeaders = asset[1].startsWith('text/html') ? {
