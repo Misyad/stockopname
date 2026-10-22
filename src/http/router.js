@@ -2,6 +2,7 @@ import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
+import { dashboard } from '../services/dashboard.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { confirmImport, previewImport } from '../services/import.js';
 import {
@@ -166,6 +167,19 @@ export async function handleInventoryReadRoute({ request, response, pool, json, 
   else if (url.pathname === '/api/transactions') data = await listTransactions(pool, actor, options);
   else data = await stockCard(pool, actor, stockCardMatch[1], options);
   json(response, 200, { success: true, data, message: 'OK' });
+  return true;
+}
+
+export async function handleReportingRoute({ request, response, pool, json, failure }) {
+  if (request.method !== 'GET') return false;
+  const path = new URL(request.url, 'http://localhost').pathname;
+  if (path !== '/api/dashboard') return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  json(response, 200, { success: true, data: await dashboard(pool, actor), message: 'OK' });
   return true;
 }
 

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/dashboard.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/dashboard" aria-current="page">Dashboard</a>
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/opnames">Stock Opname</a>
+      <a href="/masters/products">Barang</a>
+      <a href="/imports">Import</a>
+    </nav>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Ringkasan</p>
+        <h1 id="page-title" tabindex="-1">Dashboard</h1>
+        <p id="page-description">Kondisi stok regional terkini.</p>
+      </div>
+    </header>
+    <p id="screen-status" role="status" aria-live="polite">Memuat data…</p>
+    <section id="error-state" class="state error" hidden>
+      <h2>Dashboard gagal dimuat</h2>
+      <p id="error-message">Periksa koneksi lalu coba lagi.</p>
+      <button id="retry-button" type="button">Coba lagi</button>
+    </section>
+    <section id="dashboard-content" hidden>
+      <section id="dashboard-cards" class="metric-grid" aria-label="Metrik stok"></section>
+      <section class="panel" aria-labelledby="recent-title">
+        <h2 id="recent-title">Transaksi terbaru</h2>
+        <div class="table-scroll" tabindex="0" aria-label="Tabel dapat digulir horizontal">
+          <table>
+            <thead><tr><th>Tanggal</th><th>Nomor</th><th>Tipe</th><th>Barang</th><th>Gudang</th><th>Jumlah</th></tr></thead>
+            <tbody id="recent-transactions"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

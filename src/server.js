@@ -11,6 +11,7 @@ import {
   handleImportRoute,
   handleMasterRoute,
   handleOpnameRoute,
+  handleReportingRoute,
   handleTransactionRoute,
 } from './http/router.js';
 import { revokeSession } from './repositories/sessions.js';
@@ -28,6 +29,7 @@ const publicFiles = Object.freeze({
   '/inventory.js': ['inventory.js', 'text/javascript; charset=utf-8'],
   '/transaction.js': ['transaction.js', 'text/javascript; charset=utf-8'],
   '/opname.js': ['opname.js', 'text/javascript; charset=utf-8'],
+  '/dashboard.js': ['dashboard.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 });
 const publicDirectory = fileURLToPath(new URL('./public/', import.meta.url));
@@ -100,6 +102,7 @@ function opnameScreen(pathname) {
 
 function isAuthenticatedScreen(pathname) {
   return isMasterScreen(pathname) || pathname === '/imports'
+    || pathname === '/dashboard'
     || inventoryScreen(pathname) || transactionScreen(pathname) || opnameScreen(pathname);
 }
 
@@ -110,6 +113,7 @@ async function servePublic(response, pathname) {
   else if (inventoryScreen(pathname)) asset = ['inventory.html', 'text/html; charset=utf-8'];
   else if (transactionScreen(pathname)) asset = ['transaction.html', 'text/html; charset=utf-8'];
   else if (opnameScreen(pathname)) asset = ['opname.html', 'text/html; charset=utf-8'];
+  else if (pathname === '/dashboard') asset = ['dashboard.html', 'text/html; charset=utf-8'];
   if (!asset) return false;
   const body = await readFile(`${publicDirectory}${asset[0]}`);
   const htmlHeaders = asset[1].startsWith('text/html') ? {
@@ -250,6 +254,8 @@ async function route(request, response) {
   if (await handleOpnameRoute({
     request, response, pool, appOrigin, json, failure, readJson,
   })) return;
+
+  if (await handleReportingRoute({ request, response, pool, json, failure })) return;
 
   if (await handleInventoryReadRoute({ request, response, pool, json, failure })) return;
 
