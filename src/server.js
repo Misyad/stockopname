@@ -9,12 +9,15 @@ import { createLoginLimiter } from './http/middleware/rate-limit.js';
 import {
   handleInventoryReadRoute,
   handleImportRoute,
+  handleMaintenanceRoute,
   handleMasterRoute,
   handleOpnameRoute,
+  handleReportRoute,
   handleTransactionRoute,
 } from './http/router.js';
 import { revokeSession } from './repositories/sessions.js';
 import { login } from './services/auth.js';
+import { shallowHealth } from './services/maintenance.js';
 
 const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -25,7 +28,11 @@ const publicFiles = Object.freeze({
   '/login.js': ['login.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/import.js': ['import.js', 'text/javascript; charset=utf-8'],
+  '/inventory.js': ['inventory.js', 'text/javascript; charset=utf-8'],
+  '/transaction.js': ['transaction.js', 'text/javascript; charset=utf-8'],
   '/opname.js': ['opname.js', 'text/javascript; charset=utf-8'],
+  '/dashboard.js': ['dashboard.js', 'text/javascript; charset=utf-8'],
+  '/reports.js': ['reports.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 });
 const publicDirectory = fileURLToPath(new URL('./public/', import.meta.url));
@@ -83,14 +90,34 @@ function isMasterScreen(pathname) {
     || /^\/masters\/(products|categories|units|unit-aliases|warehouses|suppliers)$/.test(pathname);
 }
 
+function inventoryScreen(pathname) {
+  return pathname === '/stock' || pathname === '/transactions'
+    || /^\/stock-card\/[^/]+$/.test(pathname);
+}
+
+function transactionScreen(pathname) {
+  return /^\/transactions\/(opening|in|out)$/.test(pathname);
+}
+
+function opnameScreen(pathname) {
+  return pathname === '/opnames' || /^\/opnames\/[0-9a-f-]+$/i.test(pathname);
+}
+
 function isAuthenticatedScreen(pathname) {
-  return isMasterScreen(pathname) || pathname === '/imports';
+  return isMasterScreen(pathname) || pathname === '/imports'
+    || pathname === '/dashboard' || pathname === '/reports'
+    || inventoryScreen(pathname) || transactionScreen(pathname) || opnameScreen(pathname);
 }
 
 async function servePublic(response, pathname) {
-  const asset = isMasterScreen(pathname)
-    ? ['index.html', 'text/html; charset=utf-8']
-    : (pathname === '/imports' ? ['import.html', 'text/html; charset=utf-8'] : publicFiles[pathname]);
+  let asset = publicFiles[pathname];
+  if (isMasterScreen(pathname)) asset = ['index.html', 'text/html; charset=utf-8'];
+  else if (pathname === '/imports') asset = ['import.html', 'text/html; charset=utf-8'];
+  else if (inventoryScreen(pathname)) asset = ['inventory.html', 'text/html; charset=utf-8'];
+  else if (transactionScreen(pathname)) asset = ['transaction.html', 'text/html; charset=utf-8'];
+  else if (opnameScreen(pathname)) asset = ['opname.html', 'text/html; charset=utf-8'];
+  else if (pathname === '/dashboard') asset = ['dashboard.html', 'text/html; charset=utf-8'];
+  else if (pathname === '/reports') asset = ['reports.html', 'text/html; charset=utf-8'];
   if (!asset) return false;
   const body = await readFile(`${publicDirectory}${asset[0]}`);
   const htmlHeaders = asset[1].startsWith('text/html') ? {
@@ -118,8 +145,12 @@ async function route(request, response) {
     }
   }
   if (request.method === 'GET' && await servePublic(response, path)) return;
-  if (request.method === 'GET' && path === '/health') {
+  if (request.method === 'GET' && path === '/live') {
     json(response, 200, { success: true });
+    return;
+  }
+  if (request.method === 'GET' && path === '/health') {
+    json(response, 200, { success: true, data: await shallowHealth(pool) });
     return;
   }
 
@@ -233,6 +264,12 @@ async function route(request, response) {
   })) return;
 
   if (await handleInventoryReadRoute({ request, response, pool, json, failure })) return;
+
+  if (await handleReportRoute({ request, response, pool, json, failure })) return;
+
+  if (await handleMaintenanceRoute({
+    request, response, pool, appOrigin, json, failure, readJson,
+  })) return;
 
   if (await handleMasterRoute({
     request, response, pool, appOrigin, json, failure, readJson,

@@ -12,6 +12,13 @@
   <aside class="sidebar">
     <div class="brand">SPPG Pakiskembar 2</div>
     <nav aria-label="Navigasi utama">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/transactions/in">Barang Masuk</a>
+      <a href="/transactions/out">Barang Keluar</a>
+      <a href="/opnames">Stock Opname</a>
+      <a href="/reports">Laporan</a>
       <a href="/masters/products">Barang</a>
       <a href="/imports" aria-current="page">Import</a>
     </nav>
@@ -47,6 +54,8 @@
     <section id="preview-results" class="panel" aria-labelledby="preview-title" hidden>
       <h2 id="preview-title">Hasil preview</h2>
       <p id="preview-summary"></p>
+      <p>Konfirmasi hanya tersedia untuk Barang masuk READY. Tindakan ini menambah stok dan tidak dapat dibatalkan dari layar ini.</p>
+      <button id="confirm-button" class="primary" type="button" hidden>Konfirmasi import</button>
       <div class="table-scroll" tabindex="0" aria-label="Preview dapat digulir horizontal">
         <table>
           <thead><tr><th scope="col">Baris</th><th scope="col">Data</th><th scope="col">Status</th><th scope="col">Masalah</th></tr></thead>

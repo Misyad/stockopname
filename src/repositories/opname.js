@@ -84,6 +84,51 @@ export async function findOpname(client, id, lock = false) {
   return result.rows[0] || null;
 }
 
+export async function listOpnames(client, options) {
+  const values = [options.regionId];
+  const clauses = ['warehouses.region_id = $1'];
+  const add = (clause, value) => {
+    values.push(value);
+    clauses.push(clause.replace('?', `$${values.length}`));
+  };
+  if (options.status) add('opnames.status = ?', options.status);
+  if (options.warehouseId) add('opnames.warehouse_id = ?', options.warehouseId);
+  if (options.from) add('opnames.opname_date >= ?::date', options.from);
+  if (options.to) add('opnames.opname_date <= ?::date', options.to);
+  if (options.q) {
+    values.push(options.q);
+    const parameter = `$${values.length}`;
+    clauses.push(`(
+      opnames.opname_number ILIKE ${parameter} ESCAPE '\\'
+      OR warehouses.code ILIKE ${parameter} ESCAPE '\\'
+      OR warehouses.name ILIKE ${parameter} ESCAPE '\\'
+      OR coalesce(opnames.notes, '') ILIKE ${parameter} ESCAPE '\\'
+    )`);
+  }
+  const from = `
+    FROM stock_opnames opnames
+    JOIN warehouses ON warehouses.id = opnames.warehouse_id
+    JOIN users creators ON creators.id = opnames.created_by
+    WHERE ${clauses.join(' AND ')}
+  `;
+  const listValues = [...values, options.limit, options.offset];
+  const [count, rows] = await Promise.all([
+    client.query(`SELECT count(*)::int AS total ${from}`, values),
+    client.query(`
+      SELECT opnames.id, opnames.opname_number, opnames.warehouse_id,
+        warehouses.code AS warehouse_code, warehouses.name AS warehouse_name,
+        to_char(opnames.opname_date, 'YYYY-MM-DD') AS opname_date_text,
+        opnames.status, opnames.created_by, creators.name AS creator_name,
+        opnames.notes, opnames.rejection_reason,
+        (SELECT count(*)::int FROM stock_opname_items WHERE opname_id = opnames.id) AS item_count
+      ${from}
+      ORDER BY opnames.opname_date DESC, opnames.created_at DESC, opnames.id
+      LIMIT $${listValues.length - 1} OFFSET $${listValues.length}
+    `, listValues),
+  ]);
+  return { rows: rows.rows, total: count.rows[0].total };
+}
+
 export async function listOpnameItems(client, opnameId) {
   const result = await client.query(`
     SELECT items.id, items.product_id, products.code AS product_code,

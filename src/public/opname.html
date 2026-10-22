@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Opname — SPPG Pakiskembar 2</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/opname.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/opnames" aria-current="page">Stock Opname</a>
+      <a href="/reports">Laporan</a>
+      <a href="/transactions/in">Barang Masuk</a>
+      <a href="/transactions/out">Barang Keluar</a>
+      <a href="/imports">Import</a>
+    </nav>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Kontrol Persediaan</p>
+        <h1 id="page-title" tabindex="-1">Stock Opname</h1>
+        <p id="page-description">Hitung fisik, tinjau selisih, lalu setujui penyesuaian.</p>
+      </div>
+      <a id="back-link" href="/opnames" hidden>Kembali ke daftar</a>
+    </header>
+    <p id="screen-status" role="status" aria-live="polite">Memuat data…</p>
+    <section id="error-state" class="state error" hidden>
+      <h2>Permintaan gagal</h2>
+      <p id="error-message" role="alert"></p>
+      <button id="retry-button" type="button">Coba lagi</button>
+    </section>
+
+    <section id="list-view" hidden>
+      <form id="create-form" class="panel form-grid">
+        <h2>Buat stock opname</h2>
+        <div class="field">
+          <label for="warehouse">Kode atau nama gudang</label>
+          <input id="warehouse" name="warehouse" required maxlength="200" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="opname-date">Tanggal</label>
+          <input id="opname-date" name="date" type="date" required>
+        </div>
+        <div class="field">
+          <label for="opname-notes">Catatan</label>
+          <textarea id="opname-notes" name="notes" maxlength="2000"></textarea>
+        </div>
+        <div>
+          <button id="create-button" class="primary" type="submit">Buat snapshot</button>
+        </div>
+        <p id="create-error" class="error-text" role="alert" hidden></p>
+      </form>
+
+      <section class="panel" aria-labelledby="filter-title">
+        <h2 id="filter-title">Filter opname</h2>
+        <form id="filters" class="filters">
+          <div class="field">
+            <label for="filter-q">Cari nomor, gudang, catatan</label>
+            <input id="filter-q" name="q" type="search">
+          </div>
+          <div class="field">
+            <label for="filter-status">Status</label>
+            <select id="filter-status" name="status">
+              <option value="">Semua</option>
+              <option>DRAFT</option><option>COUNTING</option><option>SUBMITTED</option>
+              <option>APPROVED</option><option>REJECTED</option>
+            </select>
+          </div>
+          <button type="submit">Terapkan</button>
+        </form>
+      </section>
+      <section id="empty-state" class="state" hidden>
+        <h2>Belum ada stock opname</h2>
+        <p>Buat snapshot baru atau ubah filter.</p>
+      </section>
+      <section id="results" class="panel" hidden aria-label="Daftar stock opname">
+        <div class="table-scroll" tabindex="0" aria-label="Tabel dapat digulir horizontal">
+          <table>
+            <thead><tr><th>Nomor</th><th>Tanggal</th><th>Gudang</th><th>Status</th><th>Item</th><th>Petugas</th></tr></thead>
+            <tbody id="list-body"></tbody>
+          </table>
+        </div>
+        <div class="pagination" aria-label="Paginasi">
+          <button id="previous-page" type="button">Sebelumnya</button>
+          <span id="page-summary">Halaman 1</span>
+          <button id="next-page" type="button">Berikutnya</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="detail-view" hidden>
+      <section class="panel" aria-labelledby="detail-title">
+        <h2 id="detail-title">Detail opname</h2>
+        <dl id="detail-summary" class="summary-list"></dl>
+        <p id="rejection-state" class="error-text" role="alert" hidden></p>
+        <button id="start-button" class="primary" type="button" hidden>Mulai hitung / hitung ulang</button>
+      </section>
+      <form id="count-form" class="panel" hidden>
+        <h2>Hitung fisik</h2>
+        <p>Jumlah sistem disembunyikan untuk PETUGAS.</p>
+        <div class="table-scroll" tabindex="0" aria-label="Tabel hitung dapat digulir horizontal">
+          <table><thead><tr id="count-head"></tr></thead><tbody id="count-body"></tbody></table>
+        </div>
+        <p id="count-error" class="error-text" role="alert" hidden></p>
+        <div class="action-row">
+          <button id="save-counts" type="submit">Simpan hitungan</button>
+          <button id="submit-button" class="primary" type="button">Kirim untuk ditinjau</button>
+        </div>
+      </form>
+      <section id="review-view" class="panel" hidden>
+        <h2>Hasil dan bukti selisih</h2>
+        <div class="table-scroll" tabindex="0" aria-label="Tabel review dapat digulir horizontal">
+          <table><thead><tr><th>Barang</th><th>Sistem</th><th>Fisik</th><th>Selisih</th><th>Nilai</th><th>Alasan</th></tr></thead><tbody id="review-body"></tbody></table>
+        </div>
+      </section>
+      <section id="review-actions" class="panel" hidden aria-labelledby="review-action-title">
+        <h2 id="review-action-title">Keputusan supervisor</h2>
+        <p>Approval gagal jika stok bergerak atau snapshot berubah. Force approve tidak tersedia.</p>
+        <div class="action-row">
+          <button id="approve-button" class="primary" type="button">Setujui penyesuaian</button>
+          <button id="show-reject-button" type="button">Tolak untuk hitung ulang</button>
+        </div>
+        <form id="reject-form" class="field" hidden>
+          <label for="reject-reason">Alasan penolakan</label>
+          <textarea id="reject-reason" name="reason" required maxlength="2000"></textarea>
+          <div class="action-row"><button type="submit">Konfirmasi penolakan</button><button id="cancel-reject" type="button">Batal</button></div>
+        </form>
+        <p id="action-error" class="error-text" role="alert" hidden></p>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

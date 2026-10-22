@@ -82,14 +82,14 @@ function cleanup(env) {
 
 const typeNames = {
   b: 'bigint', d: 'date', i: 'integer', j: 'jsonb', n: 'numeric',
-  t: 'text', u: 'uuid', v: 'character varying', z: 'timestamp with time zone',
+  o: 'boolean', t: 'text', u: 'uuid', v: 'character varying', z: 'timestamp with time zone',
 };
 const schemaContract = {
   audit_logs: 'id:u! timestamp:z! user_id:u action:v! module:v! reference:v details:j!={}',
   auth_sessions: 'id:u! user_id:u! reference:v! secret_hash:v! csrf_secret_hash:v! expires_at:z! last_seen_at:z revoked_at:z created_at:z!',
-  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z',
+  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z restore_duration_ms:b cleanup_verified:o!=false',
   categories: 'id:u! code:v! name:v! status:v created_at:z updated_at:z',
-  import_batches: 'id:u! import_type:v file_name:v! file_hash:v! preview_version:b!=1 status:v row_count:i!=0 created_by:u! created_at:z! confirmed_at:z',
+  import_batches: 'id:u! import_type:v file_name:v! file_hash:v! preview_version:b!=1 status:v row_count:i!=0 created_by:u! created_at:z! confirmed_at:z confirmation_key:v confirmation_hash:v confirmed_by:u',
   products: 'id:u! code:v! barcode:v name:v! category_id:u! base_unit_id:u! purchase_unit_id:u conversion_factor:n! minimum_stock:n!=0 maximum_stock:n!=0 photo_url:t status:v created_at:z updated_at:z',
   ready_import_rows: 'id:u! import_batch_id:u! row_number:i! file_hash:v! date:d reference:v supplier:v warehouse:v code:v batch:v production_date:d expiry:d quantity:n unit:v price:n notes:t status:v error_code:v error_message:t created_at:z',
   regions: 'id:u! code:v! name:v! status:v created_at:z updated_at:z',
@@ -109,7 +109,7 @@ const schemaContract = {
 const expectedDefinitions = new Map();
 const expectedColumns = new Map(Object.entries(schemaContract).map(([table, contract]) => {
   const columns = contract.split(' ').map((entry) => {
-    const [, column, type, required, defaultValue] = entry.match(/^(\w+):([bdijntuvz])(!)?(?:=(.*))?$/);
+    const [, column, type, required, defaultValue] = entry.match(/^(\w+):([bdijnotuvz])(!)?(?:=(.*))?$/);
     expectedDefinitions.set(`${table}.${column}`, {
       type: typeNames[type], nullable: required ? 'NO' : 'YES', defaultValue: defaultValue ?? '',
     });
@@ -120,7 +120,8 @@ const expectedColumns = new Map(Object.entries(schemaContract).map(([table, cont
 
 const expectedForeignKeys = [
   'audit_logs.user_id->users.id', 'auth_sessions.user_id->users.id',
-  'backup_logs.created_by->users.id', 'import_batches.created_by->users.id',
+  'backup_logs.created_by->users.id', 'import_batches.confirmed_by->users.id',
+  'import_batches.created_by->users.id',
   'products.base_unit_id->units.id', 'products.category_id->categories.id',
   'products.purchase_unit_id->units.id', 'ready_import_rows.import_batch_id->import_batches.id',
   'staging_ocr_lines.created_by->users.id', 'staging_ocr_lines.import_batch_id->import_batches.id',
@@ -140,8 +141,10 @@ const expectedForeignKeys = [
 ].sort();
 
 const expectedChecks = [
-  'backup_logs_status_check', 'categories_status_check', 'regions_status_check',
-  'import_batches_import_type_check', 'import_batches_row_count_check', 'import_batches_status_check',
+  'backup_logs_restore_duration_nonnegative', 'backup_logs_status_check',
+  'categories_status_check', 'regions_status_check',
+  'import_batches_confirmation_identity_check', 'import_batches_import_type_check',
+  'import_batches_row_count_check', 'import_batches_status_check',
   'products_conversion_factor_check', 'products_maximum_stock_check',
   'products_minimum_stock_check', 'products_status_check',
   'ready_import_rows_status_check', 'staging_ocr_lines_review_status_check',
@@ -157,7 +160,8 @@ const expectedChecks = [
 
 const expectedUniques = [
   'auth_sessions_reference_key', 'auth_sessions_secret_hash_key', 'categories_code_key',
-  'import_batches_file_hash_import_type_key', 'products_barcode_key', 'products_code_key',
+  'import_batches_confirmation_key_key', 'import_batches_file_hash_import_type_key',
+  'products_barcode_key', 'products_code_key',
   'ready_import_rows_file_hash_row_number_key', 'regions_code_key',
   'stock_balances_product_id_warehouse_id_key',
   'stock_opnames_opname_number_key', 'stock_out_requests_idempotency_key_key',
@@ -168,7 +172,8 @@ const expectedUniques = [
 
 const requiredIndexPaths = [
   'audit_logs(module,action)', 'audit_logs(timestamp)',
-  'auth_sessions(user_id,expires_at)', 'import_batches(file_hash,import_type)',
+  'auth_sessions(user_id,expires_at)', 'import_batches(confirmation_key)',
+  'import_batches(file_hash,import_type)',
   'ready_import_rows(import_batch_id,status)', 'staging_ocr_lines(import_batch_id,review_status)',
   'stock_balances(product_id,warehouse_id)', 'stock_batches(product_id,warehouse_id,expiry_date)',
   'stock_opname_items(opname_id)', 'stock_opnames(warehouse_id,status)',

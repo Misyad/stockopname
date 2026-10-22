@@ -45,6 +45,13 @@ export async function lockStock(client, productId, warehouseId) {
   );
 }
 
+export async function lockStockWriter(client) {
+  await client.query(
+    'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))',
+    ['stock-maintenance'],
+  );
+}
+
 export async function lockWarehouseStock(client, warehouseId) {
   await client.query(
     'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',

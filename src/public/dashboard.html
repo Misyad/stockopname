@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/dashboard.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/dashboard" aria-current="page">Dashboard</a>
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/opnames">Stock Opname</a>
+      <a href="/reports">Laporan</a>
+      <a href="/masters/products">Master Data</a>
+      <a href="/imports">Import</a>
+    </nav>
+  </aside>
+
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Ringkasan regional</p>
+        <h1 id="page-title" tabindex="-1">Dashboard</h1>
+        <p>Ringkasan stok, kedaluwarsa, opname, dan transaksi terbaru.</p>
+      </div>
+    </header>
+
+    <p id="screen-status" role="status" aria-live="polite">Memuat dashboard…</p>
+    <section id="error-state" class="state error" hidden>
+      <h2>Dashboard gagal dimuat</h2>
+      <p id="error-message">Periksa koneksi lalu muat ulang halaman.</p>
+    </section>
+
+    <section id="metrics" class="dashboard-grid" hidden aria-label="Ringkasan stok">
+      <article class="panel"><h2>Total barang</h2><strong id="total-products">0</strong></article>
+      <article class="panel"><h2>Total stok</h2><strong id="total-stock">0</strong></article>
+      <article class="panel"><h2>Stok aman</h2><strong id="safe-stock">0</strong></article>
+      <article class="panel"><h2>Stok menipis</h2><strong id="low-stock">0</strong></article>
+      <article class="panel"><h2>Stok habis</h2><strong id="out-stock">0</strong></article>
+      <article class="panel"><h2>Kedaluwarsa</h2><strong id="expired">0</strong></article>
+      <article class="panel"><h2>≤ 7 hari</h2><strong id="expiring-7d">0</strong></article>
+      <article class="panel"><h2>≤ 30 hari</h2><strong id="expiring-30d">0</strong></article>
+      <article class="panel"><h2>Opname tertunda</h2><strong id="pending-opnames">0</strong></article>
+      <article class="panel"><h2>Total penyesuaian</h2><strong id="total-adjustment">0</strong></article>
+    </section>
+
+    <section id="recent-transactions" class="panel" hidden aria-labelledby="recent-title">
+      <h2 id="recent-title">Transaksi terbaru</h2>
+      <div class="table-scroll" tabindex="0" aria-label="Tabel dapat digulir horizontal">
+        <table>
+          <thead><tr><th scope="col">Tanggal</th><th scope="col">Jenis</th><th scope="col">Referensi</th><th scope="col">Barang</th><th scope="col">Gudang</th><th scope="col">Jumlah</th></tr></thead>
+          <tbody id="recent-body"></tbody>
+        </table>
+      </div>
+      <p id="recent-empty" hidden>Belum ada transaksi.</p>
+    </section>
+  </main>
+</body>
+</html>

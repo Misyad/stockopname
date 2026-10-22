@@ -243,8 +243,13 @@ row_count integer not null default 0 check >= 0
 created_by uuid not null fk users(id)
 created_at timestamptz not null
 confirmed_at timestamptz null
+confirmation_key varchar null unique
+confirmation_hash varchar null
+confirmed_by uuid null fk users(id)
 unique(file_hash, import_type)
 ```
+
+Confirmation identity columns are all NULL before confirmation and all non-NULL after confirmation.
 
 ### staging_ocr_lines
 
@@ -331,6 +336,7 @@ stock_transactions(created_at)
 stock_opnames(warehouse_id, status)
 stock_opname_items(opname_id)
 import_batches(file_hash, import_type)
+import_batches(confirmation_key)
 staging_ocr_lines(import_batch_id, review_status)
 ready_import_rows(import_batch_id, status)
 audit_logs(timestamp)

@@ -70,15 +70,19 @@ function queryBuilder(regionId) {
   };
 }
 
-async function currentActor(pool, sessionActor) {
+async function actorWithCapability(pool, sessionActor, capability) {
   const result = await pool.query(
     "SELECT id, role, region_id FROM users WHERE id = $1 AND status = 'ACTIVE'",
     [sessionActor?.userId],
   );
   const row = result.rows[0];
   const actor = row ? { userId: row.id, role: row.role, regionId: row.region_id } : null;
-  authorize(actor, CAPABILITIES.STOCK_READ);
+  authorize(actor, capability);
   return actor;
+}
+
+function currentActor(pool, sessionActor) {
+  return actorWithCapability(pool, sessionActor, CAPABILITIES.STOCK_READ);
 }
 
 async function warehouseFilter(pool, actor, value) {
@@ -104,7 +108,12 @@ function transactionOptions(raw) {
     throw fault(400, 'VALIDATION_ERROR', 'Invalid type.');
   }
   options.product_id = uuid(options.product_id, 'product_id');
+  options.category_id = uuid(options.category_id, 'category_id');
   options.supplier_id = uuid(options.supplier_id, 'supplier_id');
+  options.status = text(options.status, 'status')?.toUpperCase() ?? null;
+  if (options.status && !productStatuses.has(options.status)) {
+    throw fault(400, 'VALIDATION_ERROR', 'Invalid status.');
+  }
   options.q = text(options.q, 'q');
   return options;
 }
@@ -114,8 +123,10 @@ function transactionFilters(builder, options) {
   if (options.to) builder.add('transactions.transaction_date <= ?::date', options.to);
   if (options.type) builder.add('transactions.transaction_type = ?', options.type);
   if (options.product_id) builder.add('transactions.product_id = ?', options.product_id);
+  if (options.category_id) builder.add('products.category_id = ?', options.category_id);
   if (options.warehouse_id) builder.add('transactions.warehouse_id = ?', options.warehouse_id);
   if (options.supplier_id) builder.add('transactions.supplier_id = ?', options.supplier_id);
+  if (options.status) builder.add('products.status = ?', options.status);
   if (options.q) builder.add(`(
     transactions.transaction_number ILIKE ? ESCAPE '\\'
     OR transactions.reference_id ILIKE ? ESCAPE '\\'

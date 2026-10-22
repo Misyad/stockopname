@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transaksi Stok — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/transaction.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/transactions/opening" data-admin-only hidden>Stok Awal</a>
+      <a href="/transactions/in">Barang Masuk</a>
+      <a href="/transactions/out">Barang Keluar</a>
+      <a href="/opnames">Stock Opname</a>
+      <a href="/reports">Laporan</a>
+    </nav>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Pergerakan Stok</p>
+        <h1 id="page-title" tabindex="-1">Transaksi Stok</h1>
+        <p id="page-description">Isi data lalu periksa ringkasan sebelum menyimpan.</p>
+      </div>
+    </header>
+    <p id="form-error" class="state error-text" role="alert" hidden></p>
+    <form id="transaction-form" class="panel transaction-form" hidden>
+      <div id="transaction-fields" class="form-grid"></div>
+      <button id="review-button" class="primary" type="submit">Periksa transaksi</button>
+    </form>
+    <section id="receipt" class="panel" hidden aria-labelledby="receipt-title">
+      <h2 id="receipt-title" tabindex="-1">Transaksi berhasil</h2>
+      <dl id="receipt-data" class="summary-list"></dl>
+      <a href="/transactions">Lihat daftar transaksi</a>
+    </section>
+  </main>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+    <form method="dialog">
+      <header>
+        <h2 id="confirm-title">Konfirmasi transaksi</h2>
+        <p id="confirm-description">Periksa data. Stok akan berubah setelah konfirmasi.</p>
+      </header>
+      <dl id="review-summary" class="summary-list"></dl>
+      <p id="confirm-error" class="error-text" role="alert" hidden></p>
+      <footer>
+        <button id="cancel-button" type="button">Kembali</button>
+        <button id="confirm-button" class="primary" type="button">Konfirmasi dan simpan</button>
+      </footer>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -252,21 +252,28 @@ Errors: `INVALID_STATUS`, `STOCK_MOVED_DURING_OPNAME`, `STOCK_CHANGED_AFTER_OPNA
 
 ### `POST /imports/preview`
 
-ADMIN only. Accepts CSV metadata/content or uploaded file reference. Does not write ledger.
+ADMIN only. Accepts CSV metadata and UTF-8 content. Does not write ledger.
 
 Request metadata:
 
 ```json
-{"type":"PRODUCTS|STOCKIN|STAGING_OCR","fileName":"...","fileHash":"..."}
+{"type":"PRODUCTS|STOCKIN|STAGING_OCR","fileName":"...","fileHash":"<sha256>","content":"..."}
 ```
 
 Returns row counts, normalized headers, preview rows, errors, and review rows.
 
 ### `POST /imports/:batchId/confirm`
 
-ADMIN only. Requires preview token/version. Revalidates rows server-side and commits atomically according to import policy.
+ADMIN only. Confirmation is enabled only for `STOCKIN` batches with every row `READY`.
+Revalidates actor, region, master data, preview version, and every row server-side; commits stock ledger, batch, balance, row/batch status, confirmation identity, and audit atomically.
 
-Errors: `IMPORT_HEADER_INVALID`, `CATEGORY_NOT_FOUND`, `UNIT_NOT_FOUND`, `INVALID_PRODUCT`, `INVALID_WAREHOUSE`, `IMPORT_DUPLICATE`, `IMPORT_REVIEW_REQUIRED`.
+```json
+{"previewVersion":"1","idempotencyKey":"stable-client-key"}
+```
+
+Same key, batch, version, and actor returns the committed result without adding stock. Reuse with a changed identity returns `IDEMPOTENCY_CONFLICT`.
+
+Errors: `IMPORT_NOT_FOUND`, `IMPORT_TYPE_UNSUPPORTED`, `IMPORT_PREVIEW_STALE`, `IMPORT_REVIEW_REQUIRED`, `IDEMPOTENCY_CONFLICT`, and stock-in validation/authorization errors.
 
 ### `GET /imports/:batchId`
 
@@ -315,11 +322,13 @@ ADMIN/SUPERVISOR. Checks schema, references, negatives, ledger/balance mismatch,
 
 ### `POST /maintenance/backup`
 
-ADMIN only. Creates backup, records metadata, checksum, and status.
+ADMIN only. Instance-global exception: creates a full-instance database backup and records global metadata, checksum, and status. Region does not filter the artifact or metadata. Response omits storage URI and file access.
+
+Errors: `BACKUP_IN_PROGRESS` when another instance-global backup holds the advisory lock; `BACKUP_FAILED` when dump, copy, or isolated restore verification fails.
 
 ### `GET /maintenance/backups`
 
-ADMIN only. Lists backup metadata.
+ADMIN only. Lists global backup metadata across regions. Response omits storage URI and file access.
 
 ### `POST /maintenance/rebuild-balances`
 

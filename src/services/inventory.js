@@ -16,6 +16,7 @@ import {
   insertStockTransaction,
   lockIdempotency,
   lockStock,
+  lockStockWriter,
   lockWarehouseStock,
   planFefoAllocations,
   readInventoryReconciliation,
@@ -40,6 +41,8 @@ async function runTransaction(pool, idempotencyKey, mutate) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await lockStockWriter(client);
     await lockIdempotency(client, idempotencyKey);
     const result = await mutate(client);
     await client.query('COMMIT');
@@ -155,118 +158,128 @@ export async function runStockOutMutation(pool, idempotencyKey, prepare) {
   });
 }
 
-export async function runInventoryMutation(pool, idempotencyKey, prepare) {
-  return runTransaction(pool, idempotencyKey, async (client) => {
-    const mutation = await prepare(client);
-    const [prior, otherType] = await Promise.all([
-      findTransactionByIdempotency(client, idempotencyKey),
-      findStockOutByIdempotency(client, idempotencyKey),
+async function executeInventoryMutation(client, idempotencyKey, prepare) {
+  const mutation = await prepare(client);
+  const [prior, otherType] = await Promise.all([
+    findTransactionByIdempotency(client, idempotencyKey),
+    findStockOutByIdempotency(client, idempotencyKey),
+  ]);
+  if (prior || otherType) {
+    if (!prior || prior.user_id !== mutation.transaction.userId
+        || prior.request_hash !== mutation.requestHash) {
+      throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different payload.');
+    }
+    return prior;
+  }
+  mutation.validateCurrentState?.();
+
+  await lockWarehouseStock(client, mutation.warehouseId);
+  await lockStock(client, mutation.productId, mutation.warehouseId);
+  const before = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
+  if (mutation.requireEmptyLedger && before.ledgerCount > 0) {
+    throw fault(409, 'OPENING_ALREADY_EXISTS', 'Stock ledger already exists for product and warehouse.');
+  }
+  if ((before.ledgerCount > 0 || before.batchCount > 0 || before.balanceCount > 0)
+      && !before.reconciled) {
+    throw fault(
+      409,
+      'INVENTORY_RECONCILIATION_FAILED',
+      'Inventory state failed reconciliation before mutation.',
+      before,
+    );
+  }
+
+  let batchId = mutation.batch.id ?? randomUUID();
+  const balanceId = mutation.balance.id ?? randomUUID();
+  const transactionId = mutation.transaction.id ?? randomUUID();
+  let balanceBefore = mutation.transaction.balanceBefore;
+  let balanceAfter = mutation.transaction.balanceAfter;
+  if (mutation.mode === 'INCREMENT') {
+    const [batch, balance, quantities] = await Promise.all([
+      findStockBatchForUpdate(
+        client,
+        mutation.productId,
+        mutation.warehouseId,
+        mutation.batch.batchNumber,
+      ),
+      findStockBalanceForUpdate(client, mutation.productId, mutation.warehouseId),
+      client.query(
+        'SELECT trim_scale($1::numeric)::text AS before, trim_scale($1::numeric + $2::numeric)::text AS after',
+        [before.balanceQuantity, mutation.batch.quantity],
+      ),
     ]);
-    if (prior || otherType) {
-      if (!prior || prior.user_id !== mutation.transaction.userId
-          || prior.request_hash !== mutation.requestHash) {
-        throw fault(409, 'IDEMPOTENCY_CONFLICT', 'Idempotency key was already used with a different payload.');
-      }
-      return prior;
-    }
-    mutation.validateCurrentState?.();
-
-    await lockWarehouseStock(client, mutation.warehouseId);
-    await lockStock(client, mutation.productId, mutation.warehouseId);
-    const before = await inventoryReconciliation(client, mutation.productId, mutation.warehouseId);
-    if (mutation.requireEmptyLedger && before.ledgerCount > 0) {
-      throw fault(409, 'OPENING_ALREADY_EXISTS', 'Stock ledger already exists for product and warehouse.');
-    }
-    if ((before.ledgerCount > 0 || before.batchCount > 0 || before.balanceCount > 0)
-        && !before.reconciled) {
-      throw fault(
-        409,
-        'INVENTORY_RECONCILIATION_FAILED',
-        'Inventory state failed reconciliation before mutation.',
-        before,
-      );
-    }
-
-    let batchId = mutation.batch.id ?? randomUUID();
-    const balanceId = mutation.balance.id ?? randomUUID();
-    const transactionId = mutation.transaction.id ?? randomUUID();
-    let balanceBefore = mutation.transaction.balanceBefore;
-    let balanceAfter = mutation.transaction.balanceAfter;
-    if (mutation.mode === 'INCREMENT') {
-      const [batch, balance, quantities] = await Promise.all([
-        findStockBatchForUpdate(
-          client,
-          mutation.productId,
-          mutation.warehouseId,
-          mutation.batch.batchNumber,
-        ),
-        findStockBalanceForUpdate(client, mutation.productId, mutation.warehouseId),
-        client.query(
-          'SELECT trim_scale($1::numeric)::text AS before, trim_scale($1::numeric + $2::numeric)::text AS after',
-          [before.balanceQuantity, mutation.batch.quantity],
-        ),
-      ]);
-      if (batch) {
-        if (batch.production_date_text !== mutation.batch.productionDate
-            || batch.expiry_date_text !== mutation.batch.expiryDate
-            || batch.unit !== mutation.batch.unit) {
-          throw fault(
-            409,
-            'BATCH_METADATA_CONFLICT',
-            'Existing batch metadata does not match the receipt.',
-          );
-        }
-        batchId = batch.id;
-        await incrementStockBatch(
-          client,
-          batch.id,
-          mutation.batch.quantity,
-          mutation.batch.purchasePrice,
+    if (batch) {
+      if (batch.production_date_text !== mutation.batch.productionDate
+          || batch.expiry_date_text !== mutation.batch.expiryDate
+          || batch.unit !== mutation.batch.unit) {
+        throw fault(
+          409,
+          'BATCH_METADATA_CONFLICT',
+          'Existing batch metadata does not match the receipt.',
         );
-      } else {
-        await insertStockBatch(client, { ...mutation.batch, id: batchId });
       }
-      if (balance) await incrementStockBalance(client, balance.id, mutation.balance.quantity);
-      else await insertStockBalance(client, { ...mutation.balance, id: balanceId });
-      balanceBefore = quantities.rows[0].before;
-      balanceAfter = quantities.rows[0].after;
+      batchId = batch.id;
+      await incrementStockBatch(
+        client,
+        batch.id,
+        mutation.batch.quantity,
+        mutation.batch.purchasePrice,
+      );
     } else {
       await insertStockBatch(client, { ...mutation.batch, id: batchId });
-      await insertStockBalance(client, { ...mutation.balance, id: balanceId });
     }
-    const transaction = await insertStockTransaction(client, {
-      ...mutation.transaction,
-      id: transactionId,
-      idempotencyKey,
-      requestHash: mutation.requestHash,
-      productId: mutation.productId,
-      warehouseId: mutation.warehouseId,
-      batchId,
-      balanceBefore,
-      balanceAfter,
-    });
-    await insertInventoryAudit(client, {
-      id: randomUUID(),
-      userId: mutation.transaction.userId,
-      action: mutation.auditAction,
-      reference: transactionId,
-      details: mutation.auditDetails,
-    });
-
-    const reconciliation = await inventoryReconciliation(
-      client,
-      mutation.productId,
-      mutation.warehouseId,
-    );
-    if (!reconciliation.reconciled) {
-      throw fault(
-        409,
-        'INVENTORY_RECONCILIATION_FAILED',
-        'Inventory mutation failed reconciliation.',
-        reconciliation,
-      );
-    }
-
-    return transaction;
+    if (balance) await incrementStockBalance(client, balance.id, mutation.balance.quantity);
+    else await insertStockBalance(client, { ...mutation.balance, id: balanceId });
+    balanceBefore = quantities.rows[0].before;
+    balanceAfter = quantities.rows[0].after;
+  } else {
+    await insertStockBatch(client, { ...mutation.batch, id: batchId });
+    await insertStockBalance(client, { ...mutation.balance, id: balanceId });
+  }
+  const transaction = await insertStockTransaction(client, {
+    ...mutation.transaction,
+    id: transactionId,
+    idempotencyKey,
+    requestHash: mutation.requestHash,
+    productId: mutation.productId,
+    warehouseId: mutation.warehouseId,
+    batchId,
+    balanceBefore,
+    balanceAfter,
   });
+  await insertInventoryAudit(client, {
+    id: randomUUID(),
+    userId: mutation.transaction.userId,
+    action: mutation.auditAction,
+    reference: transactionId,
+    details: mutation.auditDetails,
+  });
+
+  const reconciliation = await inventoryReconciliation(
+    client,
+    mutation.productId,
+    mutation.warehouseId,
+  );
+  if (!reconciliation.reconciled) {
+    throw fault(
+      409,
+      'INVENTORY_RECONCILIATION_FAILED',
+      'Inventory mutation failed reconciliation.',
+      reconciliation,
+    );
+  }
+
+  return transaction;
+}
+
+export async function runInventoryMutation(pool, idempotencyKey, prepare) {
+  return runTransaction(pool, idempotencyKey, (client) => (
+    executeInventoryMutation(client, idempotencyKey, prepare)
+  ));
+}
+
+export async function runInventoryMutationInTransaction(client, idempotencyKey, prepare) {
+  await lockStockWriter(client);
+  await lockIdempotency(client, idempotencyKey);
+  return executeInventoryMutation(client, idempotencyKey, prepare);
 }

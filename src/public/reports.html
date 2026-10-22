@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laporan — Stock Opname</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/reports.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <aside class="sidebar">
+    <div class="brand">SPPG Pakiskembar 2</div>
+    <nav aria-label="Navigasi utama">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/stock">Stok</a>
+      <a href="/transactions">Transaksi</a>
+      <a href="/opnames">Stock Opname</a>
+      <a href="/reports" aria-current="page">Laporan</a>
+      <a href="/masters/products">Master Data</a>
+      <a href="/imports">Import</a>
+    </nav>
+  </aside>
+
+  <main id="main">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Read-only</p>
+        <h1 id="page-title" tabindex="-1">Laporan</h1>
+        <p>Filter data regional, lihat hasil bertahap, atau unduh CSV aman.</p>
+      </div>
+      <a id="export-link" class="primary button-link" href="/api/reports/STOCK/export">Unduh CSV</a>
+    </header>
+
+    <section class="panel" aria-labelledby="filter-title">
+      <h2 id="filter-title">Filter laporan</h2>
+      <form id="report-filters" class="report-filters">
+        <div class="field">
+          <label for="report-type">Jenis laporan</label>
+          <select id="report-type" name="type">
+            <option value="STOCK">Stok</option>
+            <option value="STOCK_CARD">Kartu stok</option>
+            <option value="IN">Barang masuk</option>
+            <option value="OUT">Barang keluar</option>
+            <option value="ADJUSTMENT">Penyesuaian</option>
+            <option value="OPNAME">Stock opname</option>
+            <option value="OPNAME_DIFFERENCE">Selisih opname</option>
+            <option value="BATCH_EXPIRY">Kedaluwarsa batch</option>
+          </select>
+        </div>
+        <div class="field"><label for="from">Dari tanggal</label><input id="from" name="from" type="date"></div>
+        <div class="field"><label for="to">Sampai tanggal</label><input id="to" name="to" type="date"></div>
+        <div class="field"><label for="product-id">ID barang</label><input id="product-id" name="product_id" autocomplete="off"></div>
+        <div class="field"><label for="category-id">ID kategori</label><input id="category-id" name="category_id" autocomplete="off"></div>
+        <div class="field"><label for="warehouse-id">ID gudang</label><input id="warehouse-id" name="warehouse_id" autocomplete="off"></div>
+        <div class="field"><label for="supplier-id">ID supplier</label><input id="supplier-id" name="supplier_id" autocomplete="off"></div>
+        <div class="field">
+          <label for="status-filter">Status</label>
+          <select id="status-filter" name="status">
+            <option value="">Semua</option>
+            <option value="DRAFT">DRAFT</option><option value="COUNTING">COUNTING</option>
+            <option value="SUBMITTED">SUBMITTED</option><option value="APPROVED">APPROVED</option>
+            <option value="REJECTED">REJECTED</option><option value="ACTIVE">ACTIVE</option>
+            <option value="DEPLETED">DEPLETED</option><option value="INACTIVE">INACTIVE</option>
+          </select>
+        </div>
+        <button type="submit">Terapkan</button>
+      </form>
+    </section>
+
+    <p id="screen-status" role="status" aria-live="polite">Memuat laporan…</p>
+    <section id="error-state" class="state error" hidden>
+      <h2>Laporan gagal dimuat</h2><p id="error-message">Periksa filter lalu coba lagi.</p>
+    </section>
+    <section id="empty-state" class="state" hidden><h2>Data tidak ditemukan</h2><p>Ubah filter laporan.</p></section>
+
+    <section id="results" class="panel" hidden aria-label="Hasil laporan">
+      <div class="table-scroll" tabindex="0" aria-label="Tabel dapat digulir horizontal">
+        <table><thead><tr id="table-head"></tr></thead><tbody id="table-body"></tbody></table>
+      </div>
+      <div class="pagination" aria-label="Paginasi">
+        <button id="previous-page" type="button">Sebelumnya</button>
+        <span id="page-summary">Halaman 1</span>
+        <button id="next-page" type="button">Berikutnya</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
