@@ -4,6 +4,7 @@ import { createMaster, deactivateMaster, listMasters, updateMaster } from '../se
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import { dashboard } from '../services/dashboard.js';
 import { exportReportCsv, listReport } from '../services/reports.js';
+import { detailedHealth } from '../services/maintenance.js';
 import { createOpeningStock, createStockIn, createStockOut } from '../services/transactions.js';
 import { confirmImport, previewImport } from '../services/import.js';
 import {
@@ -193,6 +194,18 @@ export async function handleReportingRoute({ request, response, pool, json, fail
       message: 'OK',
     });
   }
+  return true;
+}
+
+export async function handleMaintenanceRoute({ request, response, pool, json, failure }) {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  if (request.method !== 'GET' || path !== '/api/maintenance/health-check') return false;
+  const actor = await authenticate(pool, request);
+  if (!actor) {
+    failure(response, 401, 'UNAUTHENTICATED', 'Authentication required.');
+    return true;
+  }
+  json(response, 200, { success: true, data: await detailedHealth(pool, actor), message: 'OK' });
   return true;
 }
 

@@ -10,6 +10,7 @@ RUN corepack enable \
 
 COPY --chown=node:node src ./src
 COPY --chown=node:node db/migrations ./db/migrations
+COPY --chown=node:node scripts/health-check.js ./scripts/health-check.js
 
 USER node
 EXPOSE 3000

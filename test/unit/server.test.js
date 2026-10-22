@@ -29,7 +29,7 @@ async function waitForHealth(url, child, stderr) {
   assert.fail('Server did not become healthy within 2 seconds.');
 }
 
-test('GET /health returns {success:true}', async (t) => {
+test('GET /live returns {success:true} without a database', async (t) => {
   const port = await reservePort();
   let errorOutput = '';
   const child = spawn(process.execPath, ['src/server.js'], {
@@ -46,9 +46,39 @@ test('GET /health returns {success:true}', async (t) => {
   child.stderr.on('data', (chunk) => { errorOutput += chunk; });
   t.after(() => { if (child.exitCode === null) child.kill('SIGTERM'); });
 
-  const response = await waitForHealth(`http://127.0.0.1:${port}/health`, child, () => errorOutput);
+  const response = await waitForHealth(`http://127.0.0.1:${port}/live`, child, () => errorOutput);
 
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') ?? '', /^application\/json\b/);
   assert.deepEqual(await response.json(), { success: true });
+});
+
+test('GET /health fails closed without a database and exposes no detail', async (t) => {
+  const port = await reservePort();
+  const child = spawn(process.execPath, ['src/server.js'], {
+    cwd: new URL('../..', import.meta.url),
+    env: {
+      ...process.env,
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      APP_ORIGIN: `http://127.0.0.1:${port}`,
+      DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/unused',
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let errorOutput = '';
+  child.stderr.on('data', (chunk) => { errorOutput += chunk; });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGTERM'); });
+  await waitForHealth(`http://127.0.0.1:${port}/live`, child, () => errorOutput);
+
+  const response = await fetch(`http://127.0.0.1:${port}/health`);
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.deepEqual(body, {
+    success: false,
+    errorCode: 'NOT_READY',
+    message: 'Service unavailable.',
+    details: {},
+  });
+  assert.doesNotMatch(JSON.stringify(body), /postgres|database_url|unused@|127\.0\.0\.1:1/i);
 });

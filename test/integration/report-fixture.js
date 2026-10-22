@@ -37,6 +37,10 @@ function compose(args, options = {}) {
   });
 }
 
+export function appCommand(args, environment = {}) {
+  const variables = Object.entries(environment).flatMap(([name, value]) => ['-e', `${name}=${value}`]);
+  return compose(['exec', '-T', ...variables, 'app', ...args]);
+}
 
 export function sql(statement) {
   return compose([
@@ -71,6 +75,12 @@ export async function api(path, options = {}) {
   return { response, body };
 }
 
+export async function publicApi(path, options = {}) {
+  const response = await fetch(`http://127.0.0.1:${env.APP_PORT}${path}`, options);
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.startsWith('application/json') ? await response.json() : await response.text();
+  return { response, body };
+}
 
 export async function login(email = 'reports-admin@example.test') {
   const result = await api('/auth/login', {

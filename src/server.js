@@ -9,11 +9,13 @@ import { createLoginLimiter } from './http/middleware/rate-limit.js';
 import {
   handleInventoryReadRoute,
   handleImportRoute,
+  handleMaintenanceRoute,
   handleMasterRoute,
   handleOpnameRoute,
   handleReportingRoute,
   handleTransactionRoute,
 } from './http/router.js';
+import { readiness } from './services/maintenance.js';
 import { revokeSession } from './repositories/sessions.js';
 import { login } from './services/auth.js';
 
@@ -143,8 +145,14 @@ async function route(request, response) {
     }
   }
   if (request.method === 'GET' && await servePublic(response, path)) return;
-  if (request.method === 'GET' && path === '/health') {
+  if (request.method === 'GET' && path === '/live') {
     json(response, 200, { success: true });
+    return;
+  }
+  if (request.method === 'GET' && path === '/health') {
+    const ready = await readiness(pool);
+    if (ready) json(response, 200, { success: true });
+    else failure(response, 503, 'NOT_READY', 'Service unavailable.');
     return;
   }
 
@@ -258,6 +266,10 @@ async function route(request, response) {
   })) return;
 
   if (await handleReportingRoute({ request, response, pool, json, failure })) return;
+
+  if (await handleMaintenanceRoute({
+    request, response, pool, appOrigin, json, failure, readJson,
+  })) return;
 
   if (await handleInventoryReadRoute({ request, response, pool, json, failure })) return;
 
