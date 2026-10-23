@@ -243,7 +243,7 @@ async function auditCheck(pool, regionId) {
 async function backupRpoCheck(pool) {
   const row = (await pool.query(`
     SELECT extract(epoch FROM (now() - coalesce(verified_at, created_at))) / 3600 AS age_hours
-    FROM backup_logs WHERE status = 'VERIFIED'
+    FROM backup_logs WHERE status = 'VERIFIED' AND retained
     ORDER BY coalesce(verified_at, created_at) DESC LIMIT 1
   `)).rows[0];
   if (!row) return check([{ issue: 'NO_VERIFIED_BACKUP' }]);

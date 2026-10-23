@@ -76,20 +76,21 @@ before(async () => {
 
 after(() => app.stop());
 
-test('rebuild refuses mutation without latest VERIFIED backup at most 24 hours old', async () => {
+test('rebuild refuses mutation without latest retained VERIFIED backup at most 24 hours old', async () => {
+  app.sql(`
+    INSERT INTO backup_logs (
+      id, backup_type, file_name, storage_uri, size_bytes, checksum,
+      status, created_by, created_at, verified_at, retained
+    ) VALUES (
+      gen_random_uuid(), 'DAILY', 'healthy.dump', 'file:///healthy.dump', 1,
+      repeat('a', 64), 'VERIFIED', '${ids.admin}', now(), now(), false
+    );
+  `);
   const result = await rebuild(admin);
   assert.equal(result.response.status, 409, JSON.stringify(result.body));
   assert.equal(result.body.errorCode, 'PRE_REBUILD_BACKUP_REQUIRED');
   assert.equal(app.sql(`SELECT quantity FROM stock_balances WHERE product_id = '${ids.productA}'`), '9');
-  app.sql(`
-    INSERT INTO backup_logs (
-      id, backup_type, file_name, storage_uri, size_bytes, checksum,
-      status, created_by, created_at, verified_at
-    ) VALUES (
-      gen_random_uuid(), 'DAILY', 'healthy.dump', 'file:///healthy.dump', 1,
-      repeat('a', 64), 'VERIFIED', '${ids.admin}', now(), now()
-    );
-  `);
+  app.sql("UPDATE backup_logs SET retained = true WHERE file_name = 'healthy.dump'");
 });
 
 test('rebuild repairs only actor region from immutable ledger and writes audit', async () => {

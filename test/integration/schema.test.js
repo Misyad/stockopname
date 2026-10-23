@@ -87,7 +87,7 @@ const typeNames = {
 const schemaContract = {
   audit_logs: 'id:u! timestamp:z! user_id:u action:v! module:v! reference:v details:j!={}',
   auth_sessions: 'id:u! user_id:u! reference:v! secret_hash:v! csrf_secret_hash:v! expires_at:z! last_seen_at:z revoked_at:z created_at:z!',
-  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z restore_duration_ms:b cleanup_verified:o!=false',
+  backup_logs: 'id:u! backup_type:v! file_name:v! storage_uri:t! size_bytes:b checksum:v status:v created_by:u created_at:z verified_at:z restore_duration_ms:b cleanup_verified:o!=false retained:o!=false',
   categories: 'id:u! code:v! name:v! status:v created_at:z updated_at:z',
   import_batches: 'id:u! import_type:v file_name:v! file_hash:v! preview_version:b!=1 status:v row_count:i!=0 created_by:u! created_at:z! confirmed_at:z confirmation_key:v confirmation_hash:v confirmed_by:u',
   products: 'id:u! code:v! barcode:v name:v! category_id:u! base_unit_id:u! purchase_unit_id:u conversion_factor:n! minimum_stock:n!=0 maximum_stock:n!=0 photo_url:t status:v created_at:z updated_at:z',
