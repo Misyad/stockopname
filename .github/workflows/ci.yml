@@ -39,6 +39,9 @@ jobs:
       - name: Security tests
         run: pnpm test:security
 
+      - name: Migration dry-run tests
+        run: pnpm test:migration
+
       - name: Lint
         run: pnpm lint
 

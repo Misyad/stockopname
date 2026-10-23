@@ -197,6 +197,17 @@ migration-report.md
 
 Dry run FAIL jika checksum berubah, required sheet absent, duplicate conflict, orphan critical, invalid numeric/date, atau stock invariant akan dilanggar.
 
+Generic runner:
+
+```bash
+node scripts/migrate-sheets.js dry-run \
+  --source /read-only/source-export \
+  --mapping /approved/mapping.json \
+  --output /disposable/evidence
+```
+
+`source-manifest.json` wajib read-only dan mencatat semua 14 sheet sebagai `PRESENT` atau `SOURCE_ABSENT`. Entry `PRESENT` wajib memuat `spreadsheetId`, file exact `<SHEET>.csv`, byte count, row count, SHA-256, dan export timestamp. CSV source wajib UTF-8, read-only, maksimal 10 MiB/file, 100.000 data row, 4 KiB/field, dan 65.536 raw character/row. Header atau mapping credential/secret ditolak sebelum raw row masuk evidence/hash. Runner tidak menerima target DB URL dan tidak melakukan mutation source/target.
+
 ## 13. Import Order
 
 1. Create migration batch record/evidence directory.

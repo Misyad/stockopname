@@ -230,12 +230,16 @@ Inventory source
 → 7-day rollback window
 ```
 
-Planned commands after tooling exists:
+Phase 10.1 generic dry run:
 
 ```bash
-pnpm migrate:sheets -- --mode=dry-run --source=<export-dir>
-pnpm migrate:sheets -- --mode=rehearsal --source=<export-dir> --database=<isolated-db-url>
+pnpm migrate:sheets dry-run \
+  --source <read-only-export-dir> \
+  --mapping <approved-mapping.json> \
+  --output <disposable-evidence-dir>
 ```
+
+Real source export and Phase 10.2 isolated rehearsal remain pending.
 
 Migrator must not write/delete Google Sheets source. Historical invoice remains transaction type `IN`, not `OPENING`.
 

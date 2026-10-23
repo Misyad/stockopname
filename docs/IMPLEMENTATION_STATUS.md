@@ -67,7 +67,8 @@ Evidence timestamp for runtime inspection: `2026-10-20T12:28:47Z`.
 | 9.1 Detailed health/reconciliation | `DONE` | protected schema/reference/stock/opname/audit/RPO checks and negative tests |
 | 9.2 Backup/restore automation | `DONE` | local + independent copy, checksum, 7/4/12 retention, isolated restore/RTO evidence |
 | 9.3 Balance rebuild | `DONE` | backup-gated region rebuild, lock, reconciliation, rollback, audit tests |
-| 10 Sheets migration | `PENDING` | contract only; tooling/rehearsal evidence absent |
+| 10.1 Sheets export/dry run | `PARTIAL` | generic immutable-manifest dry run, checksum/orphan/collision evidence, and zero-write fixtures implemented; real source inventory/export absent |
+| 10.2 Sheets rehearsal/final delta | `PENDING` | real source export, isolated rehearsal, reconciliation, and approval absent |
 | 11.1 Security hardening | `PARTIAL` | CSP, secure cookie, body limit, non-root image, CI security tests present |
 | 11.2 Full UI/accessibility gate | `PARTIAL` | role-aware screens and structural a11y tests present; formal browser UAT pending |
 | 12 UAT/cutover evidence | `NOT VERIFIED` | runtime active, but complete formal release package is absent |
@@ -127,6 +128,7 @@ Implemented transaction guarantees:
 | Unit/UI | 7 | local PASS 36/36; candidate CI pending |
 | Integration | 20 | final fresh local PASS 184/184, zero skipped, exit 0 |
 | Security | 3 | local PASS 27/27; candidate CI pending |
+| Migration dry run | 1 | local PASS 43/43; real source export pending |
 | Lint/build | package scripts | local PASS; candidate CI pending |
 
 CI passing means implemented scope passed configured jobs. It does **not** prove pending product features or missing release drills.
@@ -146,7 +148,7 @@ No drift item above changes approved business rules.
 1. Run final source gates, immutable image build, candidate CI, and stacked PR review.
 2. Configure dedicated PostgreSQL staging, HTTPS, and least-privilege Drive credential.
 3. Run exact-artifact restore drill and formal UAT in isolated staging.
-4. Implement Sheets migration tooling/rehearsal only after source export and production-mutation approval are explicit.
+4. Run Phase 10.1 against immutable real source export when access is supplied; keep Phase 10.2 rehearsal and production mutation behind separate approval.
 5. Keep production deploy, DB migration, DNS, source-write freeze, and cutover behind separate approval.
 
 ## 8. Gate
