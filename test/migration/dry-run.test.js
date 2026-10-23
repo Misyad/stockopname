@@ -163,7 +163,9 @@ test('dry run verifies immutable export and writes complete zero-mutation eviden
 
 test('changed export checksum fails closed before evidence creation', async () => {
   const data = await fixture();
+  await chmod(join(data.source, 'PRODUCTS.csv'), 0o644);
   await writeFile(join(data.source, 'PRODUCTS.csv'), data.files.PRODUCTS.replace('Premium', 'Premiun'));
+  await chmod(join(data.source, 'PRODUCTS.csv'), 0o444);
   const result = run(data);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Checksum mismatch: PRODUCTS\.csv/);
@@ -679,11 +681,15 @@ test('composite stable keys cannot collide through delimiter values', async () =
 test('manifest boundary accepts 1 MiB and rejects one byte over before evidence', async () => {
   const max = 1024 * 1024;
   const exact = await fixture();
-  await writeFile(join(exact.source, 'source-manifest.json'), jsonAtBytes(exact.manifest, max), { mode: 0o444 });
+  await chmod(join(exact.source, 'source-manifest.json'), 0o644);
+  await writeFile(join(exact.source, 'source-manifest.json'), jsonAtBytes(exact.manifest, max));
+  await chmod(join(exact.source, 'source-manifest.json'), 0o444);
   assert.equal(run(exact).status, 0);
 
   const over = await fixture();
-  await writeFile(join(over.source, 'source-manifest.json'), `${jsonAtBytes(over.manifest, max)} `, { mode: 0o444 });
+  await chmod(join(over.source, 'source-manifest.json'), 0o644);
+  await writeFile(join(over.source, 'source-manifest.json'), `${jsonAtBytes(over.manifest, max)} `);
+  await chmod(join(over.source, 'source-manifest.json'), 0o444);
   const result = run(over);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Invalid source manifest file/);
