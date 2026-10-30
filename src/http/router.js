@@ -1,5 +1,6 @@
 import { authenticate, sessionSecret } from './middleware/auth.js';
 import { validCsrf, validOrigin } from './middleware/csrf.js';
+import { authorize, CAPABILITIES } from './middleware/rbac.js';
 import { createMaster, deactivateMaster, listMasters, updateMaster } from '../services/master.js';
 import { listStock, listTransactions, stockCard } from '../services/report.js';
 import {
@@ -242,6 +243,7 @@ export async function handleMaintenanceRoute({
       failure(response, 403, 'CSRF_INVALID', 'CSRF token is invalid.');
       return true;
     }
+    authorize(actor, backup ? CAPABILITIES.BACKUP : CAPABILITIES.REBUILD);
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
       failure(response, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
       return true;

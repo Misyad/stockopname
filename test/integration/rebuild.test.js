@@ -181,3 +181,32 @@ test('rebuild endpoint enforces ADMIN role, session, Origin, and CSRF', async ()
   assert.equal(forbidden.response.status, 403);
   assert.equal(forbidden.body.errorCode, 'FORBIDDEN');
 });
+
+test('rebuild applies Origin, CSRF, RBAC, then representation validation', async () => {
+  const before = app.sql("SELECT count(*) FROM audit_logs WHERE action = 'BALANCE_REBUILT'");
+  const request = (origin, csrf, contentType = 'application/json', body = '{}') => app.api(
+    '/maintenance/rebuild-balances',
+    {
+      method: 'POST',
+      headers: {
+        cookie: supervisor.cookie,
+        origin,
+        'x-csrf-token': csrf,
+        'content-type': contentType,
+      },
+      body,
+    },
+  );
+  const cases = [
+    [await request('https://invalid.example', supervisor.csrf), 'ORIGIN_INVALID'],
+    [await request(app.env.APP_ORIGIN, 'wrong'), 'CSRF_INVALID'],
+    [await request(app.env.APP_ORIGIN, supervisor.csrf, 'text/plain'), 'FORBIDDEN'],
+    [await request(app.env.APP_ORIGIN, supervisor.csrf, 'application/json', '{'), 'FORBIDDEN'],
+    [await request(app.env.APP_ORIGIN, supervisor.csrf), 'FORBIDDEN'],
+  ];
+  for (const [result, errorCode] of cases) {
+    assert.equal(result.response.status, 403, JSON.stringify(result.body));
+    assert.equal(result.body.errorCode, errorCode);
+  }
+  assert.equal(app.sql("SELECT count(*) FROM audit_logs WHERE action = 'BALANCE_REBUILT'"), before);
+});
