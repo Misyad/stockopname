@@ -355,6 +355,32 @@ test('backup endpoints enforce session, ADMIN role, Origin, CSRF, and JSON', asy
   assert.equal(media.response.status, 415);
 });
 
+test('backup applies Origin, CSRF, RBAC, then representation validation', async () => {
+  const before = app.sql('SELECT count(*) FROM backup_logs');
+  const request = (origin, csrf, contentType = 'application/json', body = '{}') => app.api('/maintenance/backup', {
+    method: 'POST',
+    headers: {
+      cookie: supervisor.cookie,
+      origin,
+      'x-csrf-token': csrf,
+      'content-type': contentType,
+    },
+    body,
+  });
+  const cases = [
+    [await request('https://invalid.example', supervisor.csrf), 'ORIGIN_INVALID'],
+    [await request(app.env.APP_ORIGIN, 'wrong'), 'CSRF_INVALID'],
+    [await request(app.env.APP_ORIGIN, supervisor.csrf, 'text/plain'), 'FORBIDDEN'],
+    [await request(app.env.APP_ORIGIN, supervisor.csrf, 'application/json', '{'), 'FORBIDDEN'],
+    [await request(app.env.APP_ORIGIN, supervisor.csrf), 'FORBIDDEN'],
+  ];
+  for (const [result, errorCode] of cases) {
+    assert.equal(result.response.status, 403, JSON.stringify(result.body));
+    assert.equal(result.body.errorCode, errorCode);
+  }
+  assert.equal(app.sql('SELECT count(*) FROM backup_logs'), before);
+});
+
 test('OPS-003 restore rejects immutable ledger keys missing balance and batch caches', async () => {
   app.sql(`
     INSERT INTO categories (id, code, name, status)
