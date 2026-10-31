@@ -328,7 +328,7 @@ Errors: `BACKUP_IN_PROGRESS` when another instance-global backup holds the advis
 
 ### `GET /maintenance/backups`
 
-ADMIN only. Lists global backup metadata across regions. Response omits storage URI and file access.
+ADMIN only. Lists global backup history across regions. `retained` states whether the artifact remains available for restore; failed and pruned records stay visible. Response omits storage URI and file access.
 
 ### `POST /maintenance/rebuild-balances`
 

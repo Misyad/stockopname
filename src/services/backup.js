@@ -108,17 +108,28 @@ function retentionExcess(names, protectedNames = new Set()) {
     .filter((name) => !protectedNames.has(name)));
 }
 
-async function localRetention(directory, protectedNames = new Set()) {
-  const names = await readdir(directory);
-  for (const name of retentionExcess(names, protectedNames)) await rm(join(directory, name));
+async function markUnretained(client, names) {
+  if (names.length) {
+    await client.query(
+      'UPDATE backup_logs SET retained = false WHERE retained AND file_name = ANY($1::varchar[])',
+      [names],
+    );
+  }
 }
 
-async function copyRemote(path, names) {
+async function localRetention(client, directory, protectedNames = new Set()) {
+  const names = await readdir(directory);
+  const excess = retentionExcess(names, protectedNames);
+  await markUnretained(client, excess);
+  for (const name of excess) await rm(join(directory, name));
+}
+
+async function copyRemote(client, path, names) {
   const copyDirectory = process.env.BACKUP_COPY_DIR;
   if (copyDirectory) {
     await mkdir(copyDirectory, { recursive: true });
     for (const name of names) await durableCopy(path, join(copyDirectory, name));
-    await localRetention(copyDirectory, new Set(names));
+    await localRetention(client, copyDirectory, new Set(names));
     return `file://${resolve(copyDirectory)}/${names[0]}`;
   }
   const folder = process.env.GOOGLE_DRIVE_FOLDER_ID;
@@ -133,7 +144,9 @@ async function copyRemote(path, names) {
   for (const name of names) await command('rclone', ['copyto', path, `stock:${name}`], env);
   const remoteNames = (await command('rclone', ['lsf', 'stock:'], env))
     .split('\n').map((name) => name.trim()).filter(Boolean);
-  for (const name of retentionExcess(remoteNames, new Set(names))) {
+  const excess = retentionExcess(remoteNames, new Set(names));
+  await markUnretained(client, excess);
+  for (const name of excess) {
     await command('rclone', ['deletefile', `stock:${name}`], env);
   }
   return `gdrive://${folder}/${names[0]}`;
@@ -207,8 +220,14 @@ async function restorePath(path) {
   return realCandidate;
 }
 
-export async function verifyRestore(path) {
+export async function verifyRestore(path, expectedChecksum = null, expectedSize = null) {
   const file = await restorePath(path);
+  if (expectedSize !== null && BigInt((await stat(file)).size) !== BigInt(expectedSize)) {
+    throw new Error('Backup size mismatch.');
+  }
+  if (expectedChecksum && await checksum(file) !== expectedChecksum) {
+    throw new Error('Backup checksum mismatch.');
+  }
   await command('pg_restore', ['--list', file], process.env);
   const source = databaseOptions();
   const isolated = `restore_verify_${randomUUID().replaceAll('-', '')}`;
@@ -281,12 +300,12 @@ export async function createBackup(pool, sessionActor) {
       const restoreDurationMs = Date.now() - restoreStartedAt;
       if (!restore.cleanupVerified) throw new Error('Isolated restore cleanup was not verified.');
       for (const alias of names.slice(1)) await durableCopy(finalPath, join(directory, alias));
-      const remoteUri = await copyRemote(finalPath, names);
-      await localRetention(directory, new Set(names));
+      const remoteUri = await copyRemote(lockClient, finalPath, names);
+      await localRetention(lockClient, directory, new Set(names));
       await lockClient.query(`
         UPDATE backup_logs SET storage_uri = $2, size_bytes = $3, checksum = $4,
           restore_duration_ms = $5, cleanup_verified = $6,
-          status = 'VERIFIED', verified_at = now() WHERE id = $1
+          status = 'VERIFIED', verified_at = now(), retained = true WHERE id = $1
       `, [
         id, `${`file://${finalPath}`}|${remoteUri}`, size, digest,
         restoreDurationMs, restore.cleanupVerified,
@@ -332,7 +351,7 @@ export async function listBackups(pool, sessionActor) {
   await actorWithCapability(pool, sessionActor, CAPABILITIES.BACKUP);
   const rows = (await pool.query(`
     SELECT id, backup_type, file_name, storage_uri, size_bytes, checksum, status,
-      restore_duration_ms, cleanup_verified, created_by, created_at, verified_at
+      restore_duration_ms, cleanup_verified, retained, created_by, created_at, verified_at
     FROM backup_logs ORDER BY created_at DESC LIMIT 100
   `)).rows;
   return rows.map((row) => ({
@@ -340,7 +359,7 @@ export async function listBackups(pool, sessionActor) {
     sizeBytes: row.size_bytes === null ? null : Number(row.size_bytes),
     checksum: row.checksum, status: row.status,
     restoreDurationMs: row.restore_duration_ms === null ? null : Number(row.restore_duration_ms),
-    cleanupVerified: row.cleanup_verified, createdBy: row.created_by,
+    cleanupVerified: row.cleanup_verified, retained: row.retained, createdBy: row.created_by,
     createdAt: row.created_at, verifiedAt: row.verified_at,
   }));
 }

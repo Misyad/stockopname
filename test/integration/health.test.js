@@ -70,9 +70,9 @@ before(async () => {
       (gen_random_uuid(), '73000000-0000-0000-0000-000000000060', '${ids.productA}', 9, 'HEALTH-KG', 1);
     INSERT INTO backup_logs (
       id, backup_type, file_name, storage_uri, size_bytes, checksum,
-      status, created_by, created_at, verified_at
+      status, created_by, created_at, verified_at, retained
     ) VALUES
-      (gen_random_uuid(), 'DAILY', 'fixture.dump', 'file:///fixture.dump', 100, repeat('a', 64), 'VERIFIED', '${ids.admin}', now(), now());
+      (gen_random_uuid(), 'DAILY', 'fixture.dump', 'file:///fixture.dump', 100, repeat('a', 64), 'VERIFIED', '${ids.admin}', now(), now(), true);
   `);
   adminCookie = await app.login('health-admin@example.test', password);
   supervisorCookie = await app.login('health-supervisor@example.test', password);
@@ -166,8 +166,12 @@ test('detailed health allows supervisor and denies petugas or anonymous', async 
   assert.equal(anonymous.body.errorCode, 'UNAUTHENTICATED');
 });
 
-test('OPS-005 backup RPO passes below and fails above 24-hour boundary', async () => {
-  app.sql("UPDATE backup_logs SET verified_at = now() - interval '23 hours 59 minutes'");
+test('OPS-005 backup RPO uses only retained verified backups and enforces 24 hours', async () => {
+  app.sql("UPDATE backup_logs SET verified_at = now() - interval '23 hours 59 minutes', retained = false");
+  const unavailable = await app.api('/maintenance/health-check', { headers: { cookie: adminCookie } });
+  assert.equal(unavailable.body.data.checks.backupRpo.status, 'FAIL');
+  assert.equal(unavailable.body.data.checks.backupRpo.issues[0].issue, 'NO_VERIFIED_BACKUP');
+  app.sql('UPDATE backup_logs SET retained = true');
   const within = await app.api('/maintenance/health-check', { headers: { cookie: adminCookie } });
   assert.equal(within.body.data.checks.backupRpo.status, 'PASS');
   app.sql("UPDATE backup_logs SET verified_at = now() - interval '24 hours 1 minute'");

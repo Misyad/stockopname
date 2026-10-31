@@ -106,6 +106,7 @@ test('OPS-001/003/006/009 backup is verified and metadata is global across ADMIN
   assert.equal(listed.response.status, 200, JSON.stringify(listed.body));
   assert.equal(listed.body.data[0].id, created.body.data.id);
   assert.equal(listed.body.data[0].status, 'VERIFIED');
+  assert.equal(listed.body.data[0].retained, true);
   assert.equal(listed.body.data[0].restoreDurationMs, created.body.data.restoreDurationMs);
   assert.equal(listed.body.data[0].cleanupVerified, true);
   assert.equal(Object.hasOwn(listed.body.data[0], 'storageUri'), false);
@@ -248,7 +249,54 @@ test('backup and restore CLIs expose verified automation without active-database
   assert.equal(evidence.cleanupVerified, true);
 });
 
+test('restore drill rejects an archive whose size or checksum differs from retained metadata', async () => {
+  const created = await createBackup();
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  app.sql(`UPDATE backup_logs SET size_bytes = size_bytes + 1 WHERE id = '${created.body.data.id}'`);
+  const run = () => app.execApp(`
+    import { pool } from './src/db/pool.js';
+    import { runRestoreDrill } from './scripts/restore.js';
+    try {
+      await runRestoreDrill('/var/backups/stock-opname/${created.body.data.fileName}');
+      console.log('FALSE_SUCCESS');
+    } catch (error) { console.log(error.message); }
+    await pool.end();
+  `);
+  assert.equal(run(), 'Backup size mismatch.');
+  app.sql(`
+    UPDATE backup_logs SET size_bytes = ${created.body.data.sizeBytes}, checksum = repeat('0', 64)
+    WHERE id = '${created.body.data.id}'
+  `);
+  assert.equal(run(), 'Backup checksum mismatch.');
+});
+
+test('OPS-004 retention marks metadata unretained before deleting an artifact', async () => {
+  const blocked = 'daily-2024-01-01T00-00-00-acde.dump';
+  const copyPath = `${process.env.BACKUP_COPY_HOST_DIR}/${blocked}`;
+  await mkdir(`${copyPath}/child`, { recursive: true });
+  app.sql(`
+    INSERT INTO backup_logs (
+      id, backup_type, file_name, storage_uri, size_bytes, checksum, status,
+      created_by, created_at, verified_at, cleanup_verified, retained
+    ) VALUES (
+      gen_random_uuid(), 'DAILY', '${blocked}', 'file://${copyPath}', 1,
+      repeat('a', 64), 'VERIFIED', '${ids.admin}', '2024-01-01', '2024-01-01', true, true
+    )
+  `);
+  const failed = await createBackup();
+  assert.equal(failed.response.status, 500, JSON.stringify(failed.body));
+  assert.equal(app.sql(`SELECT retained FROM backup_logs WHERE file_name = '${blocked}'`), 'f');
+  const listed = await app.api('/maintenance/backups', { headers: { cookie: admin.cookie } });
+  const historical = listed.body.data.find((row) => row.fileName === blocked);
+  assert.equal(historical?.status, 'VERIFIED');
+  assert.equal(historical?.retained, false);
+  assert.equal((await stat(copyPath)).isDirectory(), true);
+  await rm(copyPath, { recursive: true, force: true });
+});
+
 test('OPS-004 retention keeps at most 7 daily, 4 weekly, and 12 monthly slots', async () => {
+  const recovered = await createBackup();
+  assert.equal(recovered.response.status, 201, JSON.stringify(recovered.body));
   for (const directory of [process.env.BACKUP_LOCAL_HOST_DIR, process.env.BACKUP_COPY_HOST_DIR]) {
     const names = await readdir(directory);
     assert.ok(names.filter((name) => name.startsWith('daily-')).length <= 7);

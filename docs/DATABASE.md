@@ -322,6 +322,9 @@ status varchar check STARTED|COMPLETED|FAILED|VERIFIED
 created_by uuid null fk users(id)
 created_at timestamptz
 verified_at timestamptz null
+restore_duration_ms bigint null
+cleanup_verified boolean not null default false
+retained boolean not null default false
 ```
 
 ## 3. Required Indexes

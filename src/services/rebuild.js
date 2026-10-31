@@ -129,7 +129,7 @@ export async function rebuildBalances(pool, sessionActor) {
     const actor = await actorWithCapability(client, sessionActor);
     const backup = (await client.query(`
       SELECT id FROM backup_logs
-      WHERE status = 'VERIFIED'
+      WHERE status = 'VERIFIED' AND retained
         AND coalesce(verified_at, created_at) >= now() - interval '24 hours'
       ORDER BY coalesce(verified_at, created_at) DESC LIMIT 1
     `)).rows[0];
